@@ -1,0 +1,245 @@
+---
+title: "Real-world validation of CV and probability non-detection"
+---
+
+## Preparation
+```{r}
+library(readr)
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+```
+
+```{r}
+here::i_am("notebooks/dPCR paper/CV_p_nondetect_real_world_resp6.Rmd")
+```
+
+```{r}
+source(here::here("code", "utils_dPCR_statistics.R"))
+source(here::here("code", "utils_dists.R"))
+```
+
+## Data
+```{r}
+virus_names <- c("IAV-M" = "Influenza A virus", "IBV-M" = "Influenza B virus", "RSV-N" = "Respiratory syncytial virus", "SARS-N2" = "SARS-CoV-2")
+```
+
+```{r}
+resp6_latest <- read_csv(here::here("data", "ww_data", "dPCR_data_resp6.csv")) |>
+  mutate(collection_date = lubridate::as_date(collection_date))
+```
+
+```{r}
+resp6_latest |> pull(collection_date) |> summary()
+```
+
+## Coefficient of variation
+
+### Empirical
+```{r}
+empirical_cv_resp6 <- resp6_latest |>
+  mutate(gc_per_mLww = gc_per_lww * 1e-3) |>
+  group_by(
+    Target = target,
+    wastewater_treatment_plant.name,
+    collection_date) |>
+  summarize(
+    n = n(), Dilution = 3, # assuming a Dilution of 3
+    concWW_mean = mean(gc_per_mLww),
+    concWW_sd = sd(gc_per_mLww) / sqrt(2/pi), # bias correction of sample sd
+    concWW_cv = concWW_sd / concWW_mean,
+    .groups = "drop") |> 
+  group_by(Target) |> 
+  filter(concWW_mean != 0) |> 
+  mutate(
+    lowerWW = quantile(concWW_mean, 0.01, na.rm = T),
+    upperWW = quantile(concWW_mean, 0.95, na.rm = T)
+  ) |> 
+  ungroup() |>
+  filter(n==2)
+```
+
+### Theoretical
+```{r}
+cv_pred <- data.frame(concWW_mean = seq(0.01, 1000, 0.001) * 30)
+cv_pred$concWW_cv = sapply(cv_pred$concWW_mean, function(la) est_cv(la / 30, 22000, 5.19e-4))
+
+cv_pred <- cv_pred |> 
+  crossing(empirical_cv_resp6 |> distinct(Target, upperWW)) |>
+  filter(concWW_mean<upperWW, Target != "SARS-N1") |> 
+  mutate(Target = recode(Target, !!!virus_names))
+```
+
+### Plot
+```{r}
+empirical_cv_resp6 |> 
+  filter(concWW_mean < upperWW, Dilution == 3, Target != "SARS-N1") |> 
+  distinct(collection_date, wastewater_treatment_plant.name) |> nrow()
+```
+
+```{r fig.width = 10, fig.height = 3}
+cv_plot <- empirical_cv_resp6 |> 
+  filter(concWW_mean < upperWW, Dilution == 3, Target != "SARS-N1") |>
+  mutate(Target = recode(Target, !!!virus_names)) |> 
+  ggplot(aes(x=concWW_mean, y=concWW_cv)) + 
+  geom_point(color = "grey", shape = 4, size = 0.4, alpha = 0.8) +
+  geom_smooth(
+    method = "loess", se = TRUE, span = 0.75,
+    color = "#007191", fill = "#00b4e6"
+    ) + 
+  geom_line(data = cv_pred, color = "#e60000") +
+  facet_wrap(~Target, scales = "free", nrow = 1) + 
+  xlab("Concentration in sample [gc/mL]") +
+  ylab("Coefficient of variation") +
+  scale_y_continuous(
+    labels = scales::percent, breaks = seq(0, 2, 0.2),
+    expand = expansion(add=c(0,0))
+    ) +
+  scale_x_continuous(
+    expand = expansion(mult = c(0.001,0))
+    ) +
+  theme_bw() + 
+  theme(strip.background = element_rect(fill = NA)) +
+  coord_cartesian(ylim = c(0, 1.8))
+
+cv_plot
+```
+### Difference
+
+```{r}
+smooth_loess <- function(data) {
+  loess_fit <- loess(data = data, formula = concWW_cv ~ concWW_mean, span = 0.75)
+  loess_smooth <- data.frame(concWW_mean = seq(0.01, 1000, 0.001) * 30)
+  loess_smooth$loess <-predict(object = loess_fit, newdata = loess_smooth)
+  return(loess_smooth)
+}
+
+empirical_cv_loess <- empirical_cv_resp6 |> 
+  filter(concWW_mean < upperWW, Dilution == 3) |>
+  dplyr::nest_by(Target) |> 
+  mutate(loess = list(smooth_loess(data))) |> 
+  select(-data) |> 
+  tidyr::unnest(loess) |>
+  inner_join(empirical_cv_resp6 |> distinct(Target, upperWW), by = "Target") |>
+  filter(concWW_mean < upperWW, Target != "SARS-N1") |> 
+  mutate(Target = recode(Target, !!!virus_names))
+```
+```{r}
+empirical_cv_loess |>
+    inner_join(
+      cv_pred |> mutate(concWW_mean = round(concWW_mean,2)),
+      by = c("Target","concWW_mean")
+      ) |> 
+    ungroup() |>
+    summarize(MAD = median(abs(loess - concWW_cv), na.rm = T))
+```
+
+## Probability of non-detection
+
+### Empirical
+```{r}
+rolling_p0 <- function(conc1, conc2, window_size, stepsize = window_size) {
+  steps <- seq((window_size/2),max(conc1, na.rm = T) - window_size/2, by = stepsize)
+  p <- sapply(steps, function(s) {
+    window_start <- s - window_size / 2
+    window_end <- s + window_size / 2
+    values <- conc2[conc1 >= window_start & conc1 <= window_end]
+    return(sum(values==0)/length(values))
+  })
+  return(data.frame(x = steps, p = p))
+}
+```
+
+```{r}
+small_concs_6_newest <- resp6_latest |> 
+    mutate(
+      gc_per_mLww = gc_per_lww * 1e-3
+    ) |> 
+    group_by(target, wastewater_treatment_plant.name, collection_date) |>
+  filter(n() == 2) |> 
+  summarize(
+    n = n(),
+    n_zero = sum(gc_per_mLww == 0),
+    first = first(gc_per_mLww),
+    second = last(gc_per_mLww),
+    .groups = "drop"
+    ) |> 
+  filter(first < 30)
+
+roll_p <- bind_rows(lapply(c("IAV-M", "IBV-M", "RSV-N", "SARS-N2"), function(target_select) {
+  data_select <- small_concs_6_newest |> filter(target == target_select)
+  res <- rolling_p0(data_select$first, data_select$second, window_size = 1)
+  res$target <-  target_select
+  return(res)
+}
+))
+
+roll_p <- roll_p |> mutate(target = recode(target, "IAV-M" = "Influenza A virus", "IBV-M" = "Influenza B virus", "RSV-N" = "Respiratory syncytial virus", "SARS-N2" = "SARS-CoV-2"))
+```
+
+### Theoretical
+```{r}
+theoretical_p <- data.frame(x = seq(0, 30, 0.05)) |> 
+  mutate(p = sapply(x, est_nondetection_prob, c = 1.73e-5, n = 22665, n_replicates = 1))
+
+```
+
+### Plot
+```{r fig.width = 10, fig.height = 3}
+nondetection_plot <- roll_p |> 
+  ggplot(aes(x=x, y=p)) + 
+  geom_point(aes(x=x), color = "#007191", shape = 5, size = 1.5) + 
+  geom_smooth(
+    method = "loess", se = TRUE, span = 0.7,
+    color = "#007191", fill = "#00b4e6"
+    ) +
+  geom_line(data = theoretical_p, color = "red") +
+  xlab("Concentration in sample [gc/mL]") + 
+  ylab("Probability of non-detection") +
+  coord_cartesian(ylim = c(0,1), xlim = c(0,30)) + 
+  scale_x_continuous(expand = c(0,0)) +
+  scale_y_continuous(
+    labels = scales::percent,
+    expand = expansion(add = c(0.01, 0.01))
+    ) +
+  facet_wrap(~target, scales = "free", nrow = 1) +
+  theme_bw() + 
+  theme(strip.background = element_rect(fill = NA))
+
+nondetection_plot
+```
+
+### Difference
+
+```{r}
+smooth_loess <- function(data) {
+  loess_fit <- loess(data = data, formula = p ~ x, span = 0.7)
+  loess_smooth <- data.frame(x = seq(0, 30, 0.05))
+  loess_smooth$loess <-predict(object = loess_fit, newdata = loess_smooth)
+  return(loess_smooth)
+}
+
+empirical_p0_loess <- roll_p |> 
+  dplyr::nest_by(target) |> 
+  mutate(loess = list(smooth_loess(data))) |> 
+  select(-data) |> 
+  tidyr::unnest(loess) |>
+  filter(target != "SARS-N1")
+```
+
+```{r}
+empirical_p0_loess |>
+    inner_join(
+      theoretical_p |> mutate(x = round(x,2)),
+      by = c("x")
+      ) |> 
+    ungroup() |>
+    summarize(MAD = median(abs(loess - p), na.rm = T))
+```
+
+## Combined figure
+```{r fig.width = 10, fig.height = 6}
+cowplot::plot_grid(cv_plot, nondetection_plot, labels = "AUTO", ncol = 1)
+
+ggsave(filename = here::here("figures", "dPCR paper", "cv_lod_resp6.pdf"), width = 10, height = 6)
+```

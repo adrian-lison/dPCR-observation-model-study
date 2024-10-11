@@ -1,0 +1,36 @@
+---
+title: "Partition loss"
+---
+```{r}
+here::i_am("notebooks/dPCR paper/partition_loss.Rmd")
+```
+
+```{r}
+partition_data <- read_csv(here::here("data", "ww_data", "droplets_Stilla_Sapphire.csv"))
+partition_loss <- 30000 - partition_data$TotalDroplets
+
+length(partition_loss)
+
+lnorm_mu <- get_lognormal_mu_alternative(unit_mean = mean(partition_loss), unit_sd = sd(partition_loss) )
+lnorm_sigma <- get_lognormal_sigma_alternative(unit_mean = mean(partition_loss), unit_sd = sd(partition_loss))
+
+set.seed(0)
+
+bind_rows(
+  data.frame(x = partition_loss, type = "Observed"),
+  data.frame(x = rlnorm(1000000, meanlog = lnorm_mu, sdlog = lnorm_sigma - 0.4), type = "Simulated (log-normal)")
+) |> 
+ggplot() + 
+  geom_density(aes(x=x, color = type)) + 
+  scale_color_manual(values = c("black", "red")) +
+  xlab("Number of lost partitions") + ylab("Density") + 
+  scale_x_continuous(expand = expansion(mult = c(0.,0.02))) +
+  theme_bw() +
+  theme(
+    legend.position = "top",
+    legend.title = element_blank()
+    ) + 
+  coord_cartesian(xlim = c(0, 30000))
+
+ggsave(here::here("figures", "dPCR paper", "partition_loss.pdf"), width = 10, height = 5)
+```

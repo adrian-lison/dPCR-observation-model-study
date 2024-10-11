@@ -1,0 +1,87 @@
+---
+title: "Conditioning on non-zero measurements"
+---
+
+This notebook creates a figure that compares the unconditional mean and CV of dPCR measurements with the mean and CV when conditioning on non-zero measurements.
+
+## Preparation
+
+Imports
+```{r}
+library(readr)
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+```
+
+```{r}
+here::i_am("notebooks/dPCR paper/nonzero_conditioning.Rmd")
+```
+
+Helper functions
+```{r}
+source(here::here("code", "utils_dPCR_statistics.R"))
+source(here::here("code", "utils_dists.R"))
+```
+
+## Assumed laboratory parameters
+```{r}
+n_samples <- 100000 # number of samples to draw in simulation
+n = 25000 # number of droplets
+c = 0.519e-6 * 30 # droplet volume
+n_replicates <- 1
+example_cv <- 0
+```
+
+## Prediction
+```{r}
+conditional_df <- data.frame(lambda = seq(0.01, 14, 0.01)) |> 
+  mutate(
+    p_nondetect = sapply(lambda, est_nondetection_prob_pre, n = n, c = c, cv = example_cv, n_replicates = n_replicates, noise_dist = "lnorm"),
+    mean_unconditional = lambda,
+    cv_unconditional = sapply(lambda, est_cv_pre_lnorm, n = n, c = c, cv = example_cv, n_replicates = n_replicates),
+    mean_conditional = lambda / (1-p_nondetect),
+    cv_conditional = suppressWarnings(sqrt(cv_unconditional^2*(1-p_nondetect) - p_nondetect))
+    ) |> 
+  mutate(cv_conditional = ifelse(is.na(cv_conditional), 0, cv_conditional)) |> 
+  pivot_longer(cols = c(mean_unconditional, mean_conditional, cv_unconditional, cv_conditional), names_to = c("measure","type"), values_to = "value", names_sep = "_") |> 
+  mutate(type = factor(type, levels = c("unconditional", "conditional"), ordered = T))
+```
+
+## Plots
+```{r}
+mean_plot <- conditional_df |> 
+  filter(measure == "mean") |> 
+  ggplot(aes(x=lambda)) +
+  geom_line(aes(y=value, color = type)) +
+  xlab("Concentration in sample [gc/mL]") +
+  ylab("Expected measurement [gc/mL]") +
+  theme_bw() +
+  theme(legend.position = "top", legend.title = element_blank()) +
+  scale_color_manual(labels = c("All measurements","Non-zero measurements"), values = c("black", "red")) +
+  scale_x_continuous(expand = c(0,0)) +
+  scale_y_continuous(expand = c(0,0))
+```
+
+```{r}
+cv_plot <- conditional_df |> 
+  filter(measure == "cv") |>
+  ggplot(aes(x=lambda)) +
+  geom_line(aes(y=value, color = type)) +
+  xlab("Concentration in sample [gc/mL]") +
+  ylab("Coefficient of variation") +
+  theme_bw() +
+  theme(legend.position = "top", legend.title = element_blank()) +
+  scale_color_manual(labels = c("All measurements","Non-zero measurements"), values = c("black", "red")) +
+  scale_x_continuous(expand = c(0,0)) +
+  scale_y_log10(expand = c(0,0))
+```
+
+```{r fig.height=5, fig.width=10}
+legend <- cowplot::get_plot_component(mean_plot, 'guide-box-top', return_all = TRUE)
+
+cowplot::plot_grid(legend, cowplot::plot_grid(mean_plot + theme(legend.position = "none"), cv_plot + theme(legend.position = "none"), nrow = 1, labels = "AUTO"), ncol = 1, rel_heights = c(0.1, 1))
+
+ggsave(here::here("figures", "dPCR paper", "conditional_cv_mean.pdf"), width = 10, height = 5)
+```
+

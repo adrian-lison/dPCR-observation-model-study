@@ -1,0 +1,149 @@
+---
+title: "Averaging of dPCR measurements"
+---
+
+In this report, we study the question of whether it makes a difference to combine dPCR-based concentrations measurements from two technical replicates by averaging (i.e. arithmetic mean of concentrations) or by computing the ML estimate of the concentration from the combined partition counts. The example data used here is based on digital droplet PCR (ddPCR).
+
+```{r, echo = FALSE, output = FALSE}
+library(readr)
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+```
+```{r}
+here::i_am("notebooks/dPCR paper/averaging_measurements.Rmd")
+```
+
+```{r, echo = FALSE, output = FALSE}
+rolling_quantile <- function(x, y, window_size, stepsize = 1, quantile_val = 0.75) {
+  steps <- seq((window_size/2),max(x, na.rm = T) - window_size/2, by = stepsize)
+  q <- sapply(steps, function(s) {
+    window_start <- s - window_size / 2
+    window_end <- s + window_size / 2
+    quantile(y[x >= window_start & x <= window_end], quantile_val, na.rm = TRUE)
+  })
+  return(data.frame(step = steps, q = q))
+}
+```
+
+```{r, echo = FALSE}
+c = 1.73e-5
+avg_sim <- expand_grid(droplet_difference = seq(0, 20000, by = 10), concentration = sort(unique(c(c(5, 20, 100, 500),seq(10, 1000, 10)))), replicate_id = 1:2) |> 
+  mutate(
+    TotalDroplets = ifelse(replicate_id == 1, 25000, 25000 - droplet_difference),
+    PositiveDroplets = mapply(rbinom, n=1, size = TotalDroplets,prob = (1-exp(-concentration * c))),
+    ) |> 
+  group_by(droplet_difference, concentration) |> 
+  summarize(
+    n = n(),
+    minDroplets = min(TotalDroplets),
+    maxDroplets = max(TotalDroplets),
+    conc_avg = mean(-log(1 - PositiveDroplets/TotalDroplets)/(c)),
+    conc_ML = -log(1 - sum(PositiveDroplets)/sum(TotalDroplets))/(c),
+    conc_ML_unweighted = -log(1 - mean(PositiveDroplets/TotalDroplets))/(c),
+    conc_avg_err = conc_avg - conc_ML,
+    conc_ML_unweighted_err = conc_ML_unweighted - conc_ML,
+    conc_avg_err_rel = conc_avg_err / mean(concentration),
+    conc_ML_unweighted_err_rel = conc_ML_unweighted_err / mean(concentration),
+    logavg_err = conc_avg - conc_ML_unweighted,
+    conc_ML_real_error = conc_ML - mean(concentration),
+    conc_avg_real_error = conc_avg - mean(concentration),
+    conc_ML_unweighted_real_error = conc_ML_unweighted - mean(concentration),
+    .groups = "drop"
+  )
+```
+
+There are two differences between simple averaging and the ML estimate:
+
+  1. The ML estimate is based on an average over the probability p of positive partitions, while simple averaging is based on an average of concentrations.
+  2. The ML estimate is weighted by the number of partitions in each replicate, while simple averaging gives the same weight to each replicate.
+
+In the following, we look at the effects of both factors.
+
+### Averaging of probabilities vs. concentrations
+Below we compare the simple averaging with a unweighted ML estimate, i.e. each replicate gets the same weight in both cases. However, in one case, we average the probabilities of positive partitions, while in the other case, we average the concentrations.
+
+As we can see in the plot below, the averaging of concentrations leads to a small positive bias in the estimate of the concentration. The averaged concentration estimate is always slightly higher than the ML estimate. This is because the concentration is a non-linear function of the probability of positive partitions, therefore the average of the concentration is not equal to the concentration based on the average probability.
+
+The potential deviation increase linearly with the concentration in the PCR, however even for high concentrations (1000 gc/mL), the deviation is considerably less than 1 gc/mL.
+```{r fig.width = 10, fig.height = 5, echo = FALSE}
+avg_sim |>
+  slice_sample(prop = 1, replace = F) |> 
+  ggplot(aes(x=concentration)) +
+  geom_jitter(aes(y=logavg_err, color = droplet_difference), alpha = 0.8, size = 0.2, height = 0, width = 5) +
+  scale_x_continuous(expand = expansion(add = c(0,0))) +
+  theme_bw() + xlab("Concentration [gc/mL]") +
+  ylab("Absolute deviation from unweighted ML estimate [gc/mL]") +
+  scale_color_continuous(name = "Difference in\ntotal partitions") +
+  theme(legend.position = "right")
+
+ggsave(here::here("figures", "dPCR paper", "averaging_avg_vs_unweighted_conc.pdf"), height = 5, width = 10)
+```
+
+We can also look at the deviation as a function of the difference in the total number of partitions. As we can see in the plot below, the deviation increases with the difference in the total number of partitions. This is not really an effect of the averaging, but only because when the total number of partitions differs a lot between replicates, one of the replicates will typically have a very low number of total partitions, and thus the estimated probability of positive partitions will be very noisy for that replicate. This in turn leads to larger differences between the probabilities to be averaged, and thus a more pronounced bias in expectation.
+```{r fig.width = 10, fig.height = 5, echo = FALSE}
+avg_sim |> filter(concentration %in% c(5, 20, 100, 500, 1000)) |> 
+  mutate(concentration_label = forcats::fct_inorder(paste(concentration, "gc/mL"))) |> 
+  ggplot(aes(x=droplet_difference)) +
+  geom_line(aes(y=logavg_err), linewidth = 0.2) +
+  facet_wrap(~concentration_label, nrow = 1) +
+  theme_bw() + 
+  xlab("Difference in total number of partitions") +
+  ylab("Absolute deviation from unweighted ML estimate [gc/mL]")
+```
+### Weighting of replicates by the total number of partitions
+Now let's look at the effect of (not) weighting the replicates by the total number of partitions.
+
+Here we see that there is no bias resulting from the choice of weighting, but the possible deviations are larger than the bias shown in the previous section. Below we show deviations for differences in the total number of partitions below 2000 (which is the case for the majority of measurements).
+```{r fig.width = 10, fig.height = 5, echo = FALSE}
+avg_sim |> 
+  slice_sample(prop = 1, replace = F) |> 
+  filter(droplet_difference %in% seq(0, 3000, 100)) |> 
+  ggplot(aes(x=concentration)) +
+    geom_jitter(aes(y=conc_ML_unweighted_err, color = droplet_difference, group = droplet_difference), alpha = 0.8, size = 0.4, height = 0, width = 10) +
+  scale_x_continuous(expand = expansion(add = c(0,0))) +
+  theme_bw() + xlab("Concentration [gc/mL]") +
+  ylab("Difference between weighted & unweighted ML estimate [gc/mL]") +
+  scale_color_continuous(name = "Difference in\ntotal partitions") +
+  theme(legend.position = "right")
+
+ggsave(here::here("figures", "dPCR paper", "averaging_unweighted_vs_weighted_conc.pdf"), height = 5, width = 10)
+```
+
+If the differences in partitions are larger than that, the deviations can also become bigger. These will mostly be cases where one of the replicates has a really low number of partitions and thus the concentratioon estimate derived from this partition is very noisy. In the simple averaging approach, this replicate will still receive the same weight as the other replicate. In contrast, the ML estimate gives more weight to the replicate with more partitions.
+```{r fig.width = 10, fig.height = 5, echo = FALSE}
+avg_sim |> filter(concentration %in% c(5, 20, 100, 500, 1000)) |> 
+  mutate(concentration_label = forcats::fct_inorder(paste(concentration, "gc/mL"))) |> 
+  ggplot(aes(x=droplet_difference)) +
+  geom_line(aes(y=conc_ML_unweighted_err), linewidth = 0.2) +
+  facet_wrap(~concentration_label, nrow = 1) +
+  theme_bw() + 
+  xlab("Difference in total number of partitions") +
+  ylab("Absolute deviation from ML estimate [gc/mL]") +
+  coord_cartesian(ylim = c(-70,70))
+```
+
+### Quality of estimates
+Of course, the final question is, does this make the ML estimate better?
+The answer is: yes, slightly. The plot below compares the absolute error of the concentration estimates based on the averaging (blue) and ML (red) approach as a function of the concentration. The ribbons shows the 95% interval of absolute errors, while the lines show the median absolute error (MAE). According to the MAE, the ML estimate is slightly more accurate, however this difference is rather small compared to the variance of errors. To summarize, using the ML estimate instead of averaging concentrations can give you slightly better estimates, but it is not going to change the bigger picture unless your replicates have widely varying total partition numbers.
+
+```{r fig.width = 10, fig.height = 5, echo = FALSE}
+conc_avg_rolling_quantile <- rolling_quantile(avg_sim$concentration, abs(avg_sim$conc_avg_real_error), window_size = 100, stepsize = 50, quantile_val = 0.25)
+conc_avg_rolling_quantile$q50 <- rolling_quantile(avg_sim$concentration, abs(avg_sim$conc_avg_real_error), window_size = 100, stepsize = 50, quantile_val = 0.5)$q
+conc_avg_rolling_quantile$q95 <- rolling_quantile(avg_sim$concentration, abs(avg_sim$conc_avg_real_error), window_size = 100, stepsize = 50, quantile_val = 0.95)$q
+
+conc_ML_rolling_quantile <- rolling_quantile(avg_sim$concentration, abs(avg_sim$conc_ML_real_error), window_size = 100, stepsize = 50, quantile_val = 0.25)
+conc_ML_rolling_quantile$q50 <- rolling_quantile(avg_sim$concentration, abs(avg_sim$conc_ML_real_error), window_size = 100, stepsize = 50, quantile_val = 0.5)$q
+conc_ML_rolling_quantile$q95 <- rolling_quantile(avg_sim$concentration, abs(avg_sim$conc_ML_real_error), window_size = 100, stepsize = 50, quantile_val = 0.95)$q
+
+avg_sim |>
+  ggplot(aes(x=concentration)) +
+  geom_ribbon(data = conc_avg_rolling_quantile, aes(x=step, ymin=q, ymax = q95), color = NA, fill = "blue", alpha = 0.5) +
+  geom_line(data = conc_avg_rolling_quantile, aes(x=step, y=q50), color = "blue") +
+  geom_ribbon(data = conc_ML_rolling_quantile, aes(x=step, ymin=q, ymax = q95), color = NA, fill = "red", alpha = 0.5) +
+  geom_line(data = conc_ML_rolling_quantile, aes(x=step, y=q50), color = "red") +
+  scale_x_continuous(expand = expansion(add = c(0,0))) +
+  theme_bw() + xlab("Concentration [gc/mL]") +
+  ylab("Absolute deviation from true concentration [gc/mL]") +
+  ggtitle("Error of concentration estimates")
+```

@@ -1,0 +1,197 @@
+---
+title: "Continuous likelihoods for dPCR measurements"
+---
+
+```{r}
+here::i_am("notebooks/dPCR paper/likelihoods_continuous.Rmd")
+```
+
+# Comparison of continuous distributions to approximate concentration estimates from ddPCR
+
+## Simulation of measurements with probability of non-detection
+```{r}
+with_nondetect <- function(nonzeros, lambda, n, c, cv, n_replicates = 1) {
+  p_nondetect <- est_nondetection_prob_pre(lambda = lambda, n = n, c = c, n_replicates = n_replicates, noise_dist = "gamma", cv = example_cv)
+  detection <- extraDistr::rbern(length(nonzeros), prob = 1-p_nondetect)
+  concentrations <- detection * nonzeros
+  return(concentrations)
+}
+```
+
+```{r}
+n_samples <- 100000 # number of samples to draw in simulation
+n = 25000 # number of droplets
+c = 0.519e-6 * 30 # droplet volume
+do_with_nondetect <- TRUE
+n_replicates <- 1
+example_cv <- 0.5
+```
+
+```{r}
+set.seed(0)
+
+dists <- lapply(c(1, 5, 20), function(lambda) {
+  sim_conc_est <- sim_conc_pre(lambda = lambda, n = n, c = c, n_replicates = n_replicates, n_samples = n_samples, cv = example_cv, distribution = "gamma")
+  conc_cv_est <- est_cv_pre_gamma(lambda = lambda, n = n, c = c, n_replicates = n_replicates, cv = example_cv)
+  
+  p_nondetect <- est_nondetection_prob_pre(lambda = lambda, n = n, c = c, n_replicates = n_replicates, noise_dist = "gamma", cv = example_cv)
+  
+  conditional_mean <- lambda / (1-p_nondetect)
+  conditional_cv <- sqrt(conc_cv_est^2*(1-p_nondetect) - p_nondetect)
+  
+  parametric_ests <- list(
+    norm_conc_est = rnorm(n_samples, mean = conditional_mean, sd = conditional_cv*conditional_mean),
+    lnorm_conc_est = rlnorm3(n_samples, mean = conditional_mean, cv = conditional_cv),
+    trunc_norm_conc_est = extraDistr::rtnorm(n_samples, mean = conditional_mean, sd = conditional_cv*conditional_mean, a = 0),
+    gamma_conc_est = rgamma2(n_samples, mean = conditional_mean, cv = conditional_cv),
+    inv_gaussian = brms::rinv_gaussian(n_samples, mu = conditional_mean, shape = conditional_mean/(conditional_cv^2))
+  )
+  
+  if (do_with_nondetect) {
+    parametric_ests <- lapply(parametric_ests, with_nondetect, lambda = lambda, n = n, c = c, cv = cv, n_replicates = n_replicates)
+  }
+  
+  dat_dists <- tibble(
+    lambda = lambda,
+     Binomial = sim_conc_est,
+    `Normal` = parametric_ests$norm_conc_est,
+    `Log-Normal` = parametric_ests$lnorm_conc_est,
+    `Gamma` = parametric_ests$gamma_conc_est,
+    `Inverse Gaussian` = parametric_ests$inv_gaussian,
+    `Truncated Normal` = parametric_ests$trunc_norm_conc_est
+    ) |> tidyr::pivot_longer(-lambda) |> 
+    mutate(name = factor(name, ordered = TRUE, levels = c("Binomial", setdiff(unique(name), "Binomial"))))
+  
+  return(list(sim_conc_est = sim_conc_est, parametric_ests = parametric_ests, dat_dists = dat_dists))
+})
+
+dat_all_dists <- bind_rows(lapply(dists, function(x) x$dat_dists))
+```
+
+## Summary statistics
+```{r}
+dat_all_dists |> dplyr::group_by(lambda, name) |> dplyr::summarize(mean = mean(value), sd = sd(value), cv = sd/mean, .groups = "drop")
+```
+
+```{r, fig.width = 10, fig.height = 7}
+dat_to_plot <- dat_all_dists |> filter(lambda %in% c(5, 20)) |> mutate(name = forcats::fct_rev(name))
+
+nondetect_p <- dat_to_plot |> 
+  filter(lambda == min(lambda), name == "Binomial") |>
+  summarize(nondetect_p = sum(value == 0)/n()) |> pull()
+
+dat_to_plot$lambda_label = forcats::fct_inorder(paste(ifelse(dat_to_plot$lambda==5, "(A)", "(B)"),"Concentration in sample =",dat_to_plot$lambda, "[gc/mL]"))
+
+label_df <- data.frame(lambda_label = factor(c("(A) Concentration in sample = 5 [gc/mL]"), levels = paste("(A) Concentration in sample =", c(5, 20), "[gc/mL]"), ordered = T), x = 1.6, y = nondetect_p/2)
+
+ggplot(dat_to_plot |> filter(!name %in% c("Truncated Normal", "Binomial")), 
+                aes(x=value)) +
+  stat_ecdf(data = dat_to_plot |> filter(name == "Binomial"), geom = "step", color = "#404040") +
+  stat_ecdf(aes(color = name), geom = "step") +
+  scale_color_manual(values = rev(c("#7FC97F", "#386CB0", "#fb7b04", "#F0027F")), name = "Distribution", guide = guide_legend(reverse = TRUE)) +
+  facet_wrap(~lambda_label, ncol = 1, scales = "free_x") +
+  theme_bw() +
+  theme(
+    legend.position = "top",
+    strip.background = element_rect(fill = "#f2f2f2")
+    ) +
+  geom_text(data = label_df, aes(x=x, y=y), color = "red", hjust = 0, size = 3, label = "Non-detection probability") +
+  geom_segment(data = label_df, aes(x=x - 0.15, y=y, xend=x - 1.5, yend = y), color = "red", arrow = arrow(type = "closed", length = unit(0.02, "npc"))) +
+  geom_segment(data = label_df, aes(x=0, y = 0, xend=0, yend = sum(dat_to_plot |> filter(lambda == min(lambda)) |> pull(value)==0)/length(dat_to_plot |> filter(lambda == min(lambda)) |> pull(value))), color = "red", size = 1) +
+  coord_cartesian(xlim = c(-1, quantile(dat_to_plot |> filter(lambda == max(lambda)) |> pull(value), 0.99))) +
+  scale_x_continuous(expand = expansion(add = c(0.01, 0.1)), breaks = seq(0, quantile(dat_to_plot |> filter(lambda == max(lambda)) |> pull(value), 0.99), by = 0.2*30)) +
+  xlab("Measured concentration [gc/mL]") + ylab(expression(P(X<=x)))
+
+ggsave(here::here("figures", "dPCR paper", "theoretical_dists.pdf"), width = 10, height = 7)
+```
+
+## KL divergence scores
+```{r}
+lambda_list <- as.list(dat_all_dists |> distinct(lambda) |> pull(lambda))
+names(lambda_list) <- as.vector(lambda_list)
+bind_rows(lapply(lambda_list, function(lambda_select) {
+  lambda_select <- as.numeric(lambda_select)
+  stepsize = dat_all_dists |> dplyr::filter(lambda == lambda_select, name == "Binomial", value!=0) |> slice_min(value, with_ties = FALSE) |> pull(value)
+  true_values = dat_all_dists |> dplyr::filter(lambda == lambda_select, name == "Binomial") |> distinct(value) |> arrange(value) |> pull(value)
+  # round all values to next closest step
+  dat_discrete <- dat_all_dists |> 
+    dplyr::filter(lambda == lambda_select) |> 
+    mutate(value = ifelse(name == "Binomial", value, ifelse(value<0, 0, true_values[1+pmax(floor(value/stepsize),0)])))
+  
+  dat_discrete_count <- dat_discrete |> count(name, value) |> complete(value, name, fill = list(n = 0)) |> filter(!is.na(value))
+  
+  P <- dat_discrete_count |> filter(name=="Binomial") |> pull(n)
+  
+  kl_list <- as.list(dat_discrete_count |> filter(!(name %in% c("Binomial"))) |> distinct(name) |> pull(name) |> as.character())
+  names(kl_list) <- as.vector(kl_list)
+  
+  kl_res_all <- bind_rows(lapply(kl_list, function(dist_name) {
+    Q <- dat_discrete_count |> filter(name==dist_name) |> pull(n)
+    stopifnot(length(P) == length(Q))
+    x <- rbind(P,Q)
+    kl_res <- suppressMessages(philentropy::KL(x, est.prob = "empirical", unit = "log2"))
+    return(kl_res)
+  }), .id = "dist")
+  
+  return(kl_res_all)
+}), .id = "lambda") |> mutate(lambda = as.numeric(lambda)) |> arrange(lambda, `kullback-leibler`)
+
+```
+
+## Density plot
+(this should only be used to roughly judge the shape of the different distributions, as it is generally problematic to compare discrete and continuous densities)
+
+```{r}
+lambda_select <- 1
+stepsize = dat_all_dists |> dplyr::filter(lambda == lambda_select, name == "Binomial", value!=0) |> slice_min(value, with_ties = FALSE) |> pull(value)
+true_values = dat_all_dists |> dplyr::filter(lambda == lambda_select, name == "Binomial") |> distinct(value) |> arrange(value) |> pull(value)
+# round all values to next closest step
+dat_discrete <- dat_all_dists |> 
+  dplyr::filter(lambda == lambda_select) |> 
+  mutate(value = ifelse(name == "Binomial", value, ifelse(value<0, 0, true_values[1+pmax(floor(value/stepsize),0)])))
+
+dat_discrete |> 
+  filter(name %in% c("Binomial", "Gamma", "Log-Normal")) |> 
+  ggplot(aes(x=value, fill = name)) + geom_bar(aes(y = after_stat(prop)), position = "dodge") +
+  scale_fill_discrete() +
+  theme_bw() + xlab("Measured concentration") + ylab("Proportion") +
+  scale_y_continuous(labels = scales::percent)
+```
+
+```{r}
+plot_data <- dat_all_dists |> filter(lambda == 5)
+binomial_data <- plot_data |> dplyr::filter(name == "Binomial") |> 
+  mutate(value_rounded = ceiling(value*1e3)*1e-3) |> group_by(value_rounded) |> 
+  summarize(n = n(), value = mean(value), .groups = "drop") |> 
+  mutate(prop = n/sum(n))
+bin_width = median(binomial_data$value |> diff()) 
+ggplot(plot_data, aes(x=value)) +
+  geom_col(data = binomial_data, fill = "grey", aes(x= value, y = prop*max(value)/bin_width/30), width = bin_width) +
+  geom_density(data = plot_data |> dplyr::filter(!name %in% c("Binomial", "Normal"), value>0), aes(x=value, color = name), trim = TRUE, outline.type = "upper") +
+  scale_fill_manual(values = c("grey"))+
+  scale_color_manual(values = c("#7FC97F", "#F0027F", "#FDC086", "#386CB0"), name = "Distribution") +
+  theme_bw() +
+  theme(legend.position = "top") +
+  guides(fill="none") +
+  coord_cartesian(xlim = c(NA, quantile(dists[[length(dists)]]$sim_conc_est, 0.90)+0.1)) +
+  xlab("Measured concentration in reaction [gc/uL]") + ylab("Density")
+```
+
+## Comparison of quantiles
+```{r}
+example_lambda = 20
+n_show = 10000
+qq.out <- dplyr::bind_rows(lapply(
+  list(
+    gamma = (dat_all_dists |> filter(name == "Gamma", lambda == example_lambda) |> pull(value))[1:n_show],
+    lognormal = (dat_all_dists |> filter(name == "Log-Normal", lambda == example_lambda) |> pull(value))[1:n_show]
+  ),
+  function(other) as.data.frame(qqplot(x=dat_all_dists |> filter(name == "Binomial", lambda == example_lambda) |> pull(value), y=other, plot.it=FALSE))
+), .id = "dist")
+xylim <- range(c(qq.out$x, qq.out$y))
+
+ggplot(qq.out, aes( x= x, y = y, color = dist)) + 
+  geom_point() + 
+  geom_abline(intercept=0, slope=1) +
+  coord_fixed(ratio = 1, xlim=xylim, ylim = xylim)
+```
