@@ -331,6 +331,6 @@ est_cv_pre_taylor(lambda = 100, n = 25468, c = 1.73e-5, cv = 0, n_replicates = 1
 ## Pruning
 
 ```{r}
-prune_results(remove_all_outputs = TRUE, remove_all_jofiles = TRUE)
+prune_results(remove_all_outputs = TRUE, remove_all_jobfiles = TRUE)
 ```
 

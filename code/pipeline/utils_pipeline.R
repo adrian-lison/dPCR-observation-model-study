@@ -196,7 +196,7 @@ target_job_UpToDate <- function(job, job_result){
 
 ## Housekeeping ----
 
-prune_results <- function(approach = "EpiSewer", remove_all_jofiles = FALSE, remove_all_outputs = FALSE) {
+prune_results <- function(approach = "EpiSewer", remove_all_jobfiles = FALSE, remove_all_outputs = FALSE) {
   
   all_results <- list.files(
     file.path(tar_path_store(), "results"), pattern = paste0(approach, "_.+_result.rds"), full.names = TRUE
@@ -217,7 +217,7 @@ prune_results <- function(approach = "EpiSewer", remove_all_jofiles = FALSE, rem
   current_resultnames <- stringr::str_remove(sapply(current_results, basename),"_\\d_result.rds")
   current_outputs <- all_outputs[str_detect(all_outputs, pattern = paste0("(", paste(paste0(current_resultnames, ".out"), collapse = "|"), ")"))]
   
-  if (remove_all_jofiles) {
+  if (remove_all_jobfiles) {
     jobfiles_removed <- sum(file.remove(file.path(tar_path_store(), "results", all_jobfiles)))
   } else {
     jobfiles_removed <- sum(file.remove(file.path(tar_path_store(), "results", setdiff(all_jobfiles, current_jobfiles))))
