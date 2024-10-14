@@ -1,5 +1,14 @@
 # Improving inference in wastewater-based epidemiology by modelling the statistical features of digital PCR
 
+Adrian Lison (1,2), Timothy R. Julian (3, 4, 5), and Tanja Stadler (1,2)
+
+(1) ETH Zurich, Department of Biosystems Science and Engineering, Zurich, Switzerland\
+(2) SIB Swiss Institute of Bioinformatics, Lausanne, Switzerland\
+(3) Eawag, Swiss Federal Institute of Aquatic Science and Technology, 8600 Dubendorf, Switzerland\
+(4) Swiss Tropical and Public Health Institute, 4123 Allschwil, Switzerland\
+(5) University of Basel, 4055 Basel, Switzerland\
+(*) Corresponding author: adrian.lison@bsse.ethz.ch
+
 ## Abstract
 The growing field of wastewater-based infectious disease surveillance relies on
 the quantification of pathogen concentrations in wastewater using polymerase
