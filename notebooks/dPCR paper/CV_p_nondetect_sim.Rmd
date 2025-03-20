@@ -441,7 +441,7 @@ Non-detection probability with pre-PCR noise
 est_nondetection_prob_pre(5, c = 1.73e-5, n = 25000, cv = 0.5, n_replicates = 1, noise_dist = "gamma")
 ```
 
-## Combined main figure
+## Combined figure
 ```{r, fig.width = 10, fig.height = 8}
 mainplot <- cowplot::plot_grid(plotlist = cowplot::align_plots(cv_pre_plot_gamma + theme(legend.position = "none"), prob_nondetection_plot_gamma  + theme(legend.position = "none"), align = "v", axis = "l"), ncol = 1, labels = "AUTO")
 plotlegend <- cowplot::get_plot_component(cv_pre_plot_gamma  + theme(legend.position = "top"), pattern = "guide-box-top")

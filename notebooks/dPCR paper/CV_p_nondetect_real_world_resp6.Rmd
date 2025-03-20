@@ -60,9 +60,12 @@ empirical_cv_resp6 <- resp6_latest |>
 ```
 
 ### Theoretical
+
 ```{r}
-cv_pred <- data.frame(concWW_mean = seq(0.01, 1000, 0.001) * 30)
-cv_pred$concWW_cv = sapply(cv_pred$concWW_mean, function(la) est_cv(la / 30, 22000, 5.19e-4))
+cv_pred <- expand.grid(concWW_mean = seq(0.01, 1000, 0.01) * 30, cv = c(0, 0.5, 1, 1.5)) |> 
+  mutate(concWW_cv = mapply(est_cv_pre_gamma,
+    la = concWW_mean, c = 1.73e-5, n = 22665, cv = cv
+    )) |> mutate(cv = as.factor(cv))
 
 cv_pred <- cv_pred |> 
   crossing(empirical_cv_resp6 |> distinct(Target, upperWW)) |>
@@ -77,8 +80,8 @@ empirical_cv_resp6 |>
   distinct(collection_date, wastewater_treatment_plant.name) |> nrow()
 ```
 
-```{r fig.width = 10, fig.height = 3}
-cv_plot <- empirical_cv_resp6 |> 
+```{r fig.width = 10, fig.height = 3.2}
+cv_plot_all <- empirical_cv_resp6 |> 
   filter(concWW_mean < upperWW, Dilution == 3, Target != "SARS-N1") |>
   mutate(Target = recode(Target, !!!virus_names)) |> 
   ggplot(aes(x=concWW_mean, y=concWW_cv)) + 
@@ -87,7 +90,7 @@ cv_plot <- empirical_cv_resp6 |>
     method = "loess", se = TRUE, span = 0.75,
     color = "#007191", fill = "#00b4e6"
     ) + 
-  geom_line(data = cv_pred, color = "#e60000") +
+  geom_line(data = cv_pred, aes(linetype = cv), color = "darkred") +
   facet_wrap(~Target, scales = "free", nrow = 1) + 
   xlab("Concentration in sample [gc/mL]") +
   ylab("Coefficient of variation") +
@@ -99,17 +102,48 @@ cv_plot <- empirical_cv_resp6 |>
     expand = expansion(mult = c(0.001,0))
     ) +
   theme_bw() + 
-  theme(strip.background = element_rect(fill = NA)) +
-  coord_cartesian(ylim = c(0, 1.8))
+  theme(strip.background = element_rect(fill = NA), legend.position = "top") +
+  coord_cartesian(ylim = c(0, 1.8)) +
+  scale_linetype_manual(name = "Pre-PCR coefficient of variation", values = c("solid", "dashed", "dotdash", "dotted"))
 
-cv_plot
+cv_plot_all
 ```
+
+```{r}
+cv_plot_iav <- empirical_cv_resp6 |> 
+  filter(concWW_mean < upperWW, Dilution == 3, Target == "IAV-M") |>
+  mutate(Target = recode(Target, !!!virus_names)) |> 
+  ggplot(aes(x=concWW_mean, y=concWW_cv)) + 
+  geom_point(color = "grey", shape = 4, size = 0.4, alpha = 0.8) +
+  geom_smooth(
+    method = "loess", se = TRUE, span = 0.75,
+    color = "#007191", fill = "#00b4e6"
+    ) + 
+  geom_line(data = cv_pred |> filter(Target == "Influenza A virus"), aes(linetype = cv), color = "darkred") +
+  xlab("Concentration in sample [gc/mL]") +
+  ylab("Coefficient of variation") +
+  scale_y_continuous(
+    labels = scales::percent, breaks = seq(0, 2, 0.2),
+    expand = expansion(add=c(0,0))
+    ) +
+  scale_x_continuous(
+    expand = expansion(mult = c(0.001,0))
+    ) +
+  theme_bw() + 
+  theme(strip.background = element_rect(fill = NA), legend.position = "top") +
+  coord_cartesian(ylim = c(0, 1.8)) +
+  scale_linetype_manual(name = "Pre-PCR coefficient of variation", values = c("solid", "dashed", "dotdash", "dotted"))
+
+cv_plot_iav
+```
+
+
 ### Difference
 
 ```{r}
 smooth_loess <- function(data) {
   loess_fit <- loess(data = data, formula = concWW_cv ~ concWW_mean, span = 0.75)
-  loess_smooth <- data.frame(concWW_mean = seq(0.01, 1000, 0.001) * 30)
+  loess_smooth <- data.frame(concWW_mean = seq(0.01, 1000, 0.01) * 30)
   loess_smooth$loess <-predict(object = loess_fit, newdata = loess_smooth)
   return(loess_smooth)
 }
@@ -127,10 +161,10 @@ empirical_cv_loess <- empirical_cv_resp6 |>
 ```{r}
 empirical_cv_loess |>
     inner_join(
-      cv_pred |> mutate(concWW_mean = round(concWW_mean,2)),
+      cv_pred |> filter(cv == 0) |> mutate(concWW_mean = round(concWW_mean,2)),
       by = c("Target","concWW_mean")
       ) |> 
-    ungroup() |>
+    group_by(Target) |>
     summarize(MAD = median(abs(loess - concWW_cv), na.rm = T))
 ```
 
@@ -179,21 +213,22 @@ roll_p <- roll_p |> mutate(target = recode(target, "IAV-M" = "Influenza A virus"
 
 ### Theoretical
 ```{r}
-theoretical_p <- data.frame(x = seq(0, 30, 0.05)) |> 
-  mutate(p = sapply(x, est_nondetection_prob, c = 1.73e-5, n = 22665, n_replicates = 1))
+theoretical_p <- expand.grid(x = seq(0, 30, 0.05), cv = c(0, 0.5, 1, 1.5)) |> 
+  mutate(p = mapply(est_nondetection_prob_pre, lambda = x, cv = cv, c = 1.73e-5, n = 22665, noise_dist = "gamma")) |>
+  mutate(cv = as.factor(cv))
 
 ```
 
 ### Plot
 ```{r fig.width = 10, fig.height = 3}
-nondetection_plot <- roll_p |> 
+nondetection_plot_all <- roll_p |> 
   ggplot(aes(x=x, y=p)) + 
   geom_point(aes(x=x), color = "#007191", shape = 5, size = 1.5) + 
   geom_smooth(
     method = "loess", se = TRUE, span = 0.7,
     color = "#007191", fill = "#00b4e6"
     ) +
-  geom_line(data = theoretical_p, color = "red") +
+  geom_line(data = theoretical_p, aes(linetype = cv), color = "darkred") +
   xlab("Concentration in sample [gc/mL]") + 
   ylab("Probability of non-detection") +
   coord_cartesian(ylim = c(0,1), xlim = c(0,30)) + 
@@ -204,10 +239,36 @@ nondetection_plot <- roll_p |>
     ) +
   facet_wrap(~target, scales = "free", nrow = 1) +
   theme_bw() + 
-  theme(strip.background = element_rect(fill = NA))
+  theme(strip.background = element_rect(fill = NA), legend.position = "top") +
+  scale_linetype_manual(name = "Pre-PCR coefficient of variation", values = c("solid", "dashed", "dotdash", "dotted"))
 
-nondetection_plot
+nondetection_plot_all
 ```
+```{r}
+nondetection_plot_iav <- roll_p |> 
+  filter(target == "Influenza A virus") |> 
+  ggplot(aes(x=x, y=p)) + 
+  geom_point(aes(x=x), color = "#007191", shape = 5, size = 1.5) + 
+  geom_smooth(
+    method = "loess", se = TRUE, span = 0.7,
+    color = "#007191", fill = "#00b4e6"
+    ) +
+  geom_line(data = theoretical_p, aes(linetype = cv), color = "darkred") +
+  xlab("Concentration in sample [gc/mL]") + 
+  ylab("Probability of non-detection") +
+  coord_cartesian(ylim = c(0,1), xlim = c(0,30)) + 
+  scale_x_continuous(expand = c(0,0)) +
+  scale_y_continuous(
+    labels = scales::percent,
+    expand = expansion(add = c(0.01, 0.01))
+    ) +
+  theme_bw() + 
+  theme(strip.background = element_rect(fill = NA), legend.position = "top") +
+  scale_linetype_manual(name = "Pre-PCR coefficient of variation", values = c("solid", "dashed", "dotdash", "dotted"))
+
+nondetection_plot_iav
+```
+
 
 ### Difference
 
@@ -230,16 +291,40 @@ empirical_p0_loess <- roll_p |>
 ```{r}
 empirical_p0_loess |>
     inner_join(
-      theoretical_p |> mutate(x = round(x,2)),
+      theoretical_p |> filter(cv == 0) |> mutate(x = round(x,2)),
       by = c("x")
       ) |> 
-    ungroup() |>
+    group_by(target) |>
     summarize(MAD = median(abs(loess - p), na.rm = T))
 ```
 
 ## Combined figure
 ```{r fig.width = 10, fig.height = 6}
-cowplot::plot_grid(cv_plot, nondetection_plot, labels = "AUTO", ncol = 1)
+plotlegend <- cowplot::get_plot_component(cv_plot_all, pattern = "guide-box-top")
+
+cowplot::plot_grid(
+  plotlegend,
+  cowplot::plot_grid(
+    cv_plot_all + theme(legend.position = "none"),
+    nondetection_plot_all + theme(legend.position = "none"),
+    labels = "AUTO", ncol = 1),
+  nrow = 2, rel_heights = c(0.05, 1)
+  )
 
 ggsave(filename = here::here("figures", "dPCR paper", "cv_lod_resp6.pdf"), width = 10, height = 6)
 ```
+```{r fig.width = 10, fig.height = 3.2}
+plotlegend <- cowplot::get_plot_component(cv_plot_all, pattern = "guide-box-top")
+
+cowplot::plot_grid(
+  plotlegend,
+  cowplot::plot_grid(
+    cv_plot_iav + theme(legend.position = "none"),
+    nondetection_plot_iav + theme(legend.position = "none"),
+    labels = "AUTO", nrow = 1),
+  nrow = 2, rel_heights = c(0.1, 1)
+  )
+
+ggsave(filename = here::here("figures", "dPCR paper", "cv_lod_resp6_iav.pdf"), width = 10, height = 3.2)
+```
+
