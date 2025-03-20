@@ -1,0 +1,3 @@
+# eDNA data
+
+- [aquarium_ddPCR_raw_data.xlsx](aquarium_ddPCR_raw_data.xlsx): Digital PCR data from an aquarium seawater experiment by Scriver et al. The data are available from the original study "Drop it all: extraction-free detection of targeted marine species through optimized direct droplet digital PCR" by  Michelle Scriver, Ulla von Ammon, Cody Youngbull, Xavier Pochon, Jo-Ann L. Stanton, Neil J. Gemmell, and Anastasija Zaiko, published in PeerJ ([https://doi.org/10.7717/peerj.16969](https://doi.org/10.7717/peerj.16969)). The data are provided under a [CC BY 4.0 license](https://creativecommons.org/licenses/by/4.0/).

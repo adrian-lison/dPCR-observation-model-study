@@ -1,0 +1,330 @@
+# Reanalysis of Scriver et al.
+This notebook contains a reanalysis of free-eDNA measurements from the study "Drop it all: extraction-free detection of targeted marine species through optimized direct droplet digital PCR" by Scriver et al. (https://doi.org/10.7717/peerj.16969).
+
+## Imports
+```{r}
+library(dplyr)
+library(tidyr)
+library(dPCRfit)
+library(ggplot2)
+library(ggdist)
+library(data.table)
+```
+
+```{r}
+source("~/Documents/dev/wastewater-generative/code/utils_dists.R")
+source("~/Documents/dev/wastewater-generative/code/utils_dPCR_statistics.R")
+```
+
+## Data
+```{r}
+aquarium <- readxl::read_excel(here::here("data","eDNA","aquarium_ddPCR_raw_data.xlsx"), sheet = 1)
+```
+
+```{r}
+str(aquarium)
+```
+
+```{r}
+conc_data_all <- aquarium |> 
+  filter(Organism_Present == "No", Tank != "neg", Target_Species == "Bugula_neritina") |>
+  mutate(
+    Biomass = factor(Biomass, levels = c("high", "medium", "low"), ordered = TRUE),
+    sample_position = stringr::str_extract(
+      pattern = "(?<=\\d_.\\d.)[0-9]+", Sample_ID # add sample position (based on sample ID)
+      ), 
+    n_averaged = 1,
+    )
+```
+
+## Regression
+
+```{r}
+rerun_models <- FALSE
+model_types <- c("Averaged", "Normal", "Log-Normal", "dPCR")
+biomass_levels <- c("all", "low", "medium", "high")
+```
+
+```{r}
+fit_opts <- set_fit_opts(
+  sampler = sampler_stan_mcmc(
+    seed = 0, chains = 4, parallel_chains = 4, iter_warmup = 1000, iter_sampling = 1000
+    )
+  )
+```
+
+```{r}
+if (rerun_models) {
+  all_fits <- mapply(function(model_type, biomass_level) {
+    
+    if (biomass_level == "all") {
+      setDT(conc_data_all)
+      conc_data <- data.table::copy(conc_data_all)
+      conc_data <- conc_data[, Biomass := factor(Biomass, ordered = FALSE)]
+      reg_formula <- Concentration ~ Hours + Biomass + sample_position
+    } else {
+      conc_data <- conc_data_all |> filter(Biomass == biomass_level)
+      reg_formula <- Concentration ~ Hours + sample_position
+    }
+    
+    if (model_type == "Averaged") {
+      conc_data <- conc_data |> 
+          group_by(Target_Species, Hours) |> 
+          filter(Concentration > 0.08) |> 
+          summarize(Concentration = mean(Concentration), n_averaged = sum(n_averaged)) |> 
+          mutate(Sample_ID = paste0("s_", Hours))
+      reg_formula <- Concentration ~ Hours
+    }
+    
+    if (model_type %in% c("Averaged", "Normal")) {
+      fit <- dPCRfit(
+        formula = reg_formula,
+        data = conc_data,
+        link = "log",
+        prior_intercept = c(0, 0.5),
+        prior_coefficients = c(0, 0.5),
+        measurements = concentration_measurements(
+          id_col = "Sample_ID",
+          concentration_col = "Concentration",
+          n_averaged_col = "n_averaged",
+          distribution = "normal"
+        ),
+        noise = noise_constant_var(
+          cv_prior_mu = 0, cv_prior_sigma = 0.5
+        ),
+        nondetect = nondetect_none(),
+        fit_opts = fit_opts
+      )
+    } else if (model_type == "Log-Normal") {
+      fit <- dPCRfit(
+        formula = reg_formula,
+        data = conc_data,
+        link = "log",
+        prior_intercept = c(0, 0.5),
+        prior_coefficients = c(0, 0.5),
+        measurements = concentration_measurements(
+          id_col = "Sample_ID",
+          concentration_col = "Concentration",
+          n_averaged_col = "n_averaged",
+          distribution = "lognormal"
+        ),
+        noise = noise_constant_cv(
+          cv_prior_mu = 0, cv_prior_sigma = 0.5
+        ),
+        nondetect = nondetect_none(),
+        fit_opts = fit_opts
+      )
+    } else if (model_type == "dPCR") {
+      fit <- dPCRfit(
+        formula = reg_formula,
+        data = conc_data,
+        link = "log",
+        prior_intercept = c(0, 0.5),
+        prior_coefficients = c(0, 0.5),
+        measurements = concentration_measurements(
+          id_col = "Sample_ID",
+          concentration_col = "Concentration",
+          n_averaged_col = "n_averaged"
+        ),
+        noise = noise_dPCR(
+          cv_prior_mu = 0, cv_prior_sigma = 0.5,
+          total_partitions_prior_mu = 20000, total_partitions_prior_sigma = 0,
+          partition_variation_prior_mu = 0, partition_variation_prior_sigma = 0,
+          volume_scaled_prior_mu = 1e-3, volume_scaled_prior_sigma = 0,
+          prePCR_noise_type = "gamma"
+        ),
+        nondetect = nondetect_dPCR(),
+        fit_opts = fit_opts
+      )
+    }
+    return(list(fit = fit, model_type = model_type, biomass_level = biomass_level))
+  },
+  model_type = rep(model_types, length(biomass_levels)),
+  biomass_level = rep(biomass_levels, each = length(model_types)),
+  SIMPLIFY = FALSE
+  )
+}
+```
+
+## Diagnostics
+```{r}
+if (rerun_models) {
+  diags <- suppressMessages(rbindlist(lapply(all_fits, function(res) {
+    diags <- res$fit$fit$diagnostic_summary()
+    iters <- res$fit$fit_opts$sampler$iter_sampling + res$fit$fit_opts$sampler$iter_warmup
+    data.frame(
+      model_type = factor(res$model_type, levels = c("Averaged", "Normal", "Log-Normal", "dPCR")),
+      biomass_level = factor(res$biomass_level, levels = c("low", "medium", "high", "all"), ordered = TRUE),
+      percent_divergent = sum(diags$num_divergent)/iters*100,
+      percent_max_treedepth = sum(diags$num_max_treedepth)/iters*100,
+      min_ebfmi = min(diags$ebfmi)
+      )
+  })))
+  saveRDS(diags, here::here("data", "results", "aquarium_Scriver_et_al_diagnostics.rds"))
+} else {
+  diags <- readRDS(here::here("data", "results", "aquarium_Scriver_et_al_diagnostics.rds"))
+}
+print(diags)
+```
+
+## Results
+```{r}
+if (rerun_models) {
+  regression_summary <- rbindlist(lapply(all_fits, function(res) {
+    coef_summary <- res$fit$coef_summary
+    coef_summary[, model_type := factor(res$model_type, levels = c("Averaged", "Normal", "Log-Normal", "dPCR"))]
+    coef_summary[, biomass_level := factor(res$biomass_level, levels = c("low", "medium", "high", "all"), ordered = TRUE)]
+    setcolorder(coef_summary, c("model_type", "biomass_level", "variable"))
+  }))
+  saveRDS(regression_summary, here::here("data", "results", "aquarium_Scriver_et_al_regression_summary.rds"))
+  
+  regression_half_life <- bind_rows(lapply(all_fits, function(res) {
+    tidybayes::spread_draws(res$fit$fit, beta[i]) |> 
+      filter(i == 1) |> 
+      mutate(half_life = -log(2)/beta) |> 
+      ungroup() |>
+      summarize(
+        mean = mean(half_life),
+        median = median(half_life),
+        sd = sd(half_life),
+        q5 = quantile(half_life, p = 0.05),
+        q95 = quantile(half_life, p = 0.95)
+      ) |> 
+      mutate(
+        model_type = factor(res$model_type, levels = c("Averaged", "Normal", "Log-Normal", "dPCR")),
+        biomass_level = factor(res$biomass_level, levels = c("low", "medium", "high", "all"), ordered = TRUE),
+        .before = 1)
+  }))
+  saveRDS(regression_half_life, here::here("data", "results", "aquarium_Scriver_et_al_regression_half_life.rds"))
+  
+  regression_linear <- rbindlist(lapply(all_fits, function(res) {
+    if (res$model_type == "Averaged") {
+      newdata <- data.frame(
+        Hours = min(conc_data_all$Hours):max(conc_data_all$Hours)
+        )
+    } else {
+        if (res$biomass_level == "all") {
+        newdata <- data.frame(
+          Hours = min(conc_data_all$Hours):max(conc_data_all$Hours),
+          Biomass = "high",
+          sample_position = 1
+          )
+      } else {
+        newdata <- data.frame(
+          Hours = min(conc_data_all$Hours):max(conc_data_all$Hours),
+          sample_position = 1
+          )
+      }
+    }
+    
+    preds <- predict(
+      res$fit,
+      newdata = newdata,
+      interval = "confidence",
+      keep_data = TRUE
+      )
+    preds[, model_type := factor(res$model_type, levels = c("Averaged", "Normal", "Log-Normal", "dPCR"))]
+    preds[, biomass_level := factor(res$biomass_level, levels = c("low", "medium", "high", "all"), ordered = TRUE)]
+    setcolorder(preds, c("model_type", "biomass_level"))
+  }), fill = TRUE)
+  saveRDS(regression_linear, here::here("data", "results", "aquarium_Scriver_et_al_regression_linear.rds"))
+} else {
+  regression_summary <- readRDS(here::here("data", "results", "aquarium_Scriver_et_al_regression_summary.rds"))
+  regression_half_life <- readRDS(here::here("data", "results", "aquarium_Scriver_et_al_regression_half_life.rds"))
+  regression_linear <- readRDS(here::here("data", "results", "aquarium_Scriver_et_al_regression_linear.rds"))
+}
+```
+
+### Coefficients
+
+```{r}
+regression_summary |> 
+  filter(variable %in% c("(Intercept)","Hours"))
+```
+
+### Half-life estimates
+```{r, fig.width=8, fig.height=2}
+halflife_plot <- regression_half_life |> 
+  mutate(biomass_level = factor(biomass_level, levels = c("low", "medium", "high", "all"), ordered = TRUE)) |> 
+  mutate(model_type = factor(
+    model_type,
+    levels = rev(c("Averaged", "Normal", "Log-Normal", "dPCR")),
+    labels = rev(c("Averaged", "Normal", "Log-\n Normal", "dPCR")),
+    ordered = T)
+    ) |> 
+  ggplot(aes(y = model_type, x = mean, color = model_type)) +
+  geom_vline(xintercept = 0, linetype = "dashed", color = "black") +
+  geom_vline(xintercept = 16.86489, linetype = "dotted", color = "darkred") +
+  geom_pointinterval(aes(xmin = q5, xmax = q95, x = median), size = 8, linewidth = 2.5) +
+  scale_x_continuous(breaks = seq(-200,200,20)) +
+  coord_cartesian(xlim = c(-2, 65)) +
+  facet_wrap(~biomass_level, nrow = 1) +
+  theme_bw() +
+  theme(
+    legend.position = "none",
+    axis.title.y = element_blank(),
+    strip.background = element_blank(),
+    #strip.text = element_blank(),
+    ) +
+  xlab("Half-life [hours]") +
+  scale_color_manual(values = rev(c("grey","#d31f11","#f47a00","#007191")))
+halflife_plot
+```
+
+```{r}
+regression_half_life |> filter(model_type == "dPCR") |> select(model_type, biomass_level, median, q5, q95)
+regression_half_life |> filter(model_type == "Log-Normal") |> select(model_type, biomass_level, median, q5, q95)
+regression_half_life |> filter(model_type == "Normal") |> select(model_type, biomass_level, median, q5, q95)
+```
+
+### Model fit
+```{r}
+measurements_to_plot <- conc_data_all |> rename(biomass_level = Biomass)
+measurements_to_plot <- rbindlist(list(
+  measurements_to_plot,
+  measurements_to_plot |> mutate(biomass_level = "all")
+  ), fill = T)
+
+conc_plot <- ggplot(measurements_to_plot) +
+  geom_vline(xintercept = 0, linetype = "dashed", color = "black") +
+  geom_ribbon(data = regression_linear, aes(x = Hours, ymin = q5, ymax = q95, fill = model_type), alpha = 0.2) +
+  geom_line(data = regression_linear, aes(x=Hours, y = mean, color = model_type)) +
+  geom_jitter(aes(x=Hours, y=Concentration), color = "black", size = 0.75, width = 0) +
+  facet_wrap(~factor(biomass_level, levels = rev(c("all", "high", "medium", "low")), labels = rev(c("All", "High biomass", "Medium biomass", "Low biomass"))), scales = "free_y", nrow = 1) +
+  theme_bw() +
+  theme(
+    legend.position = "top",
+    legend.title = element_blank(),
+    strip.background = element_rect(fill = "#f2f2f2")
+    ) +
+  xlab("Time since removal of organism [hours]") +
+  ylab(expression(paste("Concentration [gc/", mu, "L]"))) +
+  coord_cartesian(xlim = c(-2, 70)) +
+  scale_fill_manual(values = c("grey","#d31f11","#f47a00","#007191")) +
+  scale_color_manual(values = c("grey","#d31f11","#f47a00","#007191"))
+conc_plot
+```
+
+### Combined figure
+```{r, fig.width = 10, fig.height = 6}
+main_grid <- cowplot::plot_grid(
+  cowplot::plot_grid(NULL, cowplot::get_plot_component(conc_plot, pattern = "guide-box-top"), nrow = 1, rel_widths = c(0.07, 0.93)),
+  cowplot::plot_grid(
+  halflife_plot,
+  conc_plot + theme(axis.title.y = element_blank(), plot.background = element_blank(), legend.position = "None"),
+  ncol = 1, rel_heights = c(0.37, 0.63), align = "v", labels = "AUTO"),
+  ncol = 1, rel_heights = c(0.07, 0.93), align = "v", axis = "l"
+)
+
+cowplot::plot_grid(
+  NULL,
+  cowplot::plot_grid(NULL, cowplot::get_plot_component(conc_plot, "ylab-l"), ncol = 1, rel_heights = c(0.35, 0.65)), 
+  NULL,
+  main_grid,
+  nrow = 1, rel_widths = c(0.005, 0.02, -0.03, 0.98)
+  )
+
+ggsave(here::here("~/Documents/dev/wastewater-generative", "figures", "dPCR paper", "aquarium_Bugula_neritina.pdf"), width = 10, height = 6)
+```
+
+
