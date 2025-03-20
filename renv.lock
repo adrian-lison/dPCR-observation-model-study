@@ -748,6 +748,28 @@
       ],
       "Hash": "8f27335f2bcff4d6035edcc82d7d46de"
     },
+    "dPCRfit": {
+      "Package": "dPCRfit",
+      "Version": "0.0.1",
+      "Source": "GitHub",
+      "RemoteType": "github",
+      "RemoteHost": "api.github.com",
+      "RemoteUsername": "adrian-lison",
+      "RemoteRepo": "dPCRfit",
+      "RemoteRef": "main",
+      "RemoteSha": "6d7f884b3e8f3892d2bd007d9809e86269f4c04a",
+      "Remotes": "stan-dev/cmdstanr",
+      "Requirements": [
+        "R",
+        "cli",
+        "cmdstanr",
+        "data.table",
+        "purrr",
+        "rlang",
+        "stringr"
+      ],
+      "Hash": "9a15fb26bed4443adeb04e85e8171b76"
+    },
     "data.table": {
       "Package": "data.table",
       "Version": "1.14.0",
