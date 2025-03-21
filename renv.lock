@@ -757,18 +757,20 @@
       "RemoteUsername": "adrian-lison",
       "RemoteRepo": "dPCRfit",
       "RemoteRef": "main",
-      "RemoteSha": "6d7f884b3e8f3892d2bd007d9809e86269f4c04a",
+      "RemoteSha": "a13a683813ca733bc9b8da82b052048e34d915e3",
       "Remotes": "stan-dev/cmdstanr",
       "Requirements": [
         "R",
         "cli",
         "cmdstanr",
         "data.table",
+        "posterior",
         "purrr",
         "rlang",
+        "stats",
         "stringr"
       ],
-      "Hash": "9a15fb26bed4443adeb04e85e8171b76"
+      "Hash": "0f234b5a1629fa02bb81880c76d5b5df"
     },
     "data.table": {
       "Package": "data.table",
