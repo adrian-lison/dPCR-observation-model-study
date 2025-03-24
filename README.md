@@ -1,4 +1,4 @@
-# Improving inference in wastewater-based epidemiology by modelling the statistical features of digital PCR
+# Improving inference in environmental surveillance by modelling the statistical features of digital PCR
 
 Adrian Lison (1,2), Timothy R. Julian (3, 4, 5), and Tanja Stadler (1,2)
 
@@ -10,40 +10,41 @@ Adrian Lison (1,2), Timothy R. Julian (3, 4, 5), and Tanja Stadler (1,2)
 (*) Corresponding author: adrian.lison@bsse.ethz.ch
 
 ## Abstract
-The growing field of wastewater-based infectious disease surveillance relies on
-the quantification of pathogen concentrations in wastewater using polymerase
-chain reaction (PCR) techniques. However, existing models for monitoring
-pathogen spread using wastewater have often been adapted from methods for case
-count data and neglect the statistical features of PCR techniques. In this
-paper, we seek to overcome the widespread simplistic modelling of wastewater PCR
-measurements as normally or log-normally distributed by proposing an appropriate
-model for digital PCR (dPCR). Building on established statistical theory of
-dPCR, we derive approximations for the coefficient of variation of measurements
-and the probability of non-detection and propose a hurdle model-based likelihood
-for estimating concentrations from dPCR measurements. Using simulations and
-real-world data, we show that simple likelihoods based on normal or log-normal
-distributions are misspecified, affecting the estimation of pathogen
-concentrations and infection trends over time. In contrast, the proposed
-dPCR-specific likelihood accurately models the distribution of dPCR measurements
-and improves epidemiological estimates and forecasts even if details of the
-laboratory protocol are unknown. The method has been implemented in the
-open-source R package [EpiSewer](https://adrian-lison.github.io/EpiSewer/) to
-improve wastewater-based monitoring of pathogens.
+Digital polymerase chain reaction (dPCR) is a powerful technique for quantifying
+gene targets in environmental samples, with various applications such as
+biodiversity monitoring and wastewater-based epidemiology. However, statistical
+analyses of environmental dPCR data often assume, explicitly or implicitly, that
+concentration measurements have a normal or log-normal error structure, which
+does not reflect the underlying partitioning statistics of dPCR. Using
+simulations and real-world environmental data, we show that (log-)normality
+assumptions are violated for dPCR measurements, leading to inaccurate estimates
+of gene concentrations and underlying biological processes. To enable reliable
+analyses of environmental dPCR data, we present a dPCR-specific likelihood model
+that accounts for concentration-dependent measurement noise and non-detects as
+characteristic of dPCR assays. We demonstrate that this approach overcomes
+biases in inference from environmental data, such as estimating free-eDNA decay
+in seawater or pathogen transmission from wastewater monitoring. Our method is
+implemented in the R packages
+[dPCRfit](https://github.com/adrian-lison/dPCRfit/) for regression analyses and
+[EpiSewer](https://adrian-lison.github.io/EpiSewer/) for wastewater
+surveillance.
 
 ## Contents of this repository
-*Code version: v1.0.0*
+*Code version: v2.0.0*
 
 This repository contains the simulation code, data, and analysis scripts of the
-study "Improving inference in wastewater-based epidemiology by modelling the
+study "Improving inference in environmental surveillance by modelling the
 statistical features of digital PCR". The code can be used to reproduce all
 figures and numerical results in the paper.
 
 The repository is structured as follows:
 - **code**: Contains utility functions and scripts.
-- **data/ww_data**: Contains the real-world wastewater data used in this study.
-  See the [data README](data/ww_data/README.md) for details.
-- **data/results**: Contains pre-computed results of the simulation study. These
-  can be used to reproduce the figures without re-running the simulations.
+- **data/ww_data**: Contains real-world wastewater data used in this study.
+  See the [wastewater data README](data/ww_data/README.md) for details.
+- **data/eDNA**: Contains eDNA measurements by Scriver et al. that were reanalyzed in this study.
+  See the [eDNA data README](data/eDNA/README.md) for details.
+- **data/results**: Contains pre-computed results and fitted models. These
+  can be used to reproduce the figures without re-running simulations / model fits.
 - **notebooks**: Contains all analysis scripts in R notebook format.
 - **pipelines**: Contains scripts to fit wastewater models in `EpiSewer` using a
   modeling pipeline via the `targets` package.
@@ -54,11 +55,13 @@ The analysis scripts are written as R notebooks and are ideally run in an Rstudi
 project. When opening the project, run `renv::restore()` to install all required
 R packages (requires the `renv` package).
 
-Note that [EpiSewer v0.0.3](https://doi.org/10.5281/zenodo.13899759) was used
+Note that the R packages [dPCRfit v0.0.1](https://doi.org/10.5281/zenodo.15062625) 
+and [EpiSewer v0.0.3](https://doi.org/10.5281/zenodo.13899759) were used
 for inference from concentration measurements in this study. To ensure
 reproducibility, `renv` will automatically install this version of the package.
-Newer versions of the package may be found on the [EpiSewer GitHub
-repository](https://github.com/adrian-lison/EpiSewer).
+Newer versions of the package may be found on the 
+[dPCRfit](https://github.com/adrian-lison/dPCRfit) and 
+[EpiSewer](https://github.com/adrian-lison/EpiSewer) Github repositories.
 
 ### Simulation study
 To reproduce the model validation via simulation, run the notebook
@@ -76,7 +79,10 @@ for help.*
 To reproduce the inference from measurements of a single concentration, run the
 notebook [single_concentration.Rmd](notebooks/dPCR%20paper/single_concentration.Rmd).
 
-To reproduce the inference of concentrations over time, run the notebook
+To reproduce the reanalysis of eDNA measurements by Scriver et al., run the
+notebook [aquarium_Scriver_et_al.Rmd](notebooks/dPCR%20paper/aquarium_Scriver_et_al.Rmd).
+
+To reproduce the analysis of wastewater measurements with different noise models, run the notebook
 [noise_model_comparison.Rmd](notebooks/dPCR%20paper/noise_model_comparison.Rmd).
 
 ### Additional results
