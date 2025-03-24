@@ -249,7 +249,7 @@ halflife_plot <- regression_half_life |>
   mutate(model_type = factor(
     model_type,
     levels = rev(c("Averaged", "Normal", "Log-Normal", "dPCR")),
-    labels = rev(c("Averaged", "Normal", "Log-\n Normal", "dPCR")),
+    labels = rev(c("Original", "Normal", "Log-\n Normal", "dPCR")),
     ordered = T)
     ) |> 
   ggplot(aes(y = model_type, x = mean, color = model_type)) +
@@ -263,8 +263,7 @@ halflife_plot <- regression_half_life |>
   theme(
     legend.position = "none",
     axis.title.y = element_blank(),
-    strip.background = element_blank(),
-    #strip.text = element_blank(),
+    strip.background = element_rect(fill = "#f2f2f2")
     ) +
   xlab("Half-life [hours]") +
   scale_color_manual(values = rev(c("grey","#d31f11","#f47a00","#007191")))
@@ -275,6 +274,7 @@ halflife_plot
 regression_half_life |> filter(model_type == "dPCR") |> select(model_type, biomass_level, median, q5, q95)
 regression_half_life |> filter(model_type == "Log-Normal") |> select(model_type, biomass_level, median, q5, q95)
 regression_half_life |> filter(model_type == "Normal") |> select(model_type, biomass_level, median, q5, q95)
+regression_half_life |> filter(model_type == "Averaged") |> select(model_type, biomass_level, median, q5, q95)
 ```
 
 ### Model fit
@@ -284,6 +284,7 @@ measurements_to_plot <- rbindlist(list(
   measurements_to_plot,
   measurements_to_plot |> mutate(biomass_level = "all")
   ), fill = T)
+regression_linear[, model_type := factor(model_type, labels = c("Original", "Normal", "Log-Normal", "dPCR"))]
 
 conc_plot <- ggplot(measurements_to_plot) +
   geom_vline(xintercept = 0, linetype = "dashed", color = "black") +
@@ -295,7 +296,8 @@ conc_plot <- ggplot(measurements_to_plot) +
   theme(
     legend.position = "top",
     legend.title = element_blank(),
-    strip.background = element_rect(fill = "#f2f2f2")
+    strip.background = element_blank(),
+    strip.text = element_blank(),
     ) +
   xlab("Time since removal of organism [hours]") +
   ylab(expression(paste("Concentration [gc/", mu, "L]"))) +
@@ -310,9 +312,9 @@ conc_plot
 main_grid <- cowplot::plot_grid(
   cowplot::plot_grid(NULL, cowplot::get_plot_component(conc_plot, pattern = "guide-box-top"), nrow = 1, rel_widths = c(0.07, 0.93)),
   cowplot::plot_grid(
-  halflife_plot,
+  halflife_plot + theme(plot.background = element_blank()),
   conc_plot + theme(axis.title.y = element_blank(), plot.background = element_blank(), legend.position = "None"),
-  ncol = 1, rel_heights = c(0.37, 0.63), align = "v", labels = "AUTO"),
+  ncol = 1, rel_heights = c(0.4, 0.6), align = "v", labels = "AUTO"),
   ncol = 1, rel_heights = c(0.07, 0.93), align = "v", axis = "l"
 )
 
