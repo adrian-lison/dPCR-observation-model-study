@@ -55,7 +55,7 @@ The analysis scripts are written as R notebooks and are ideally run in an Rstudi
 project. When opening the project, run `renv::restore()` to install all required
 R packages (requires the `renv` package).
 
-Note that the R packages [dPCRfit v0.0.1](https://doi.org/10.5281/zenodo.15062625) 
+Note that the R packages [dPCRfit v0.0.2](https://doi.org/10.5281/zenodo.15089580) 
 and [EpiSewer v0.0.3](https://doi.org/10.5281/zenodo.13899759) were used
 for inference from concentration measurements in this study. To ensure
 reproducibility, `renv` will automatically install this version of the package.

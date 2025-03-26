@@ -757,7 +757,7 @@
       "RemoteUsername": "adrian-lison",
       "RemoteRepo": "dPCRfit",
       "RemoteRef": "main",
-      "RemoteSha": "a13a683813ca733bc9b8da82b052048e34d915e3",
+      "RemoteSha": "67812bcf798449e6b2d118ef1b1bdbfc2ae5e549",
       "Remotes": "stan-dev/cmdstanr",
       "Requirements": [
         "R",
@@ -770,7 +770,7 @@
         "stats",
         "stringr"
       ],
-      "Hash": "0f234b5a1629fa02bb81880c76d5b5df"
+      "Hash": "4f9fcb5ffc6e2d506292c838ac7ae647"
     },
     "data.table": {
       "Package": "data.table",
