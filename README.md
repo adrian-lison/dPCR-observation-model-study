@@ -11,26 +11,29 @@ Adrian Lison (1,2), Timothy R. Julian (3, 4, 5), and Tanja Stadler (1,2)
 
 ## Abstract
 Digital polymerase chain reaction (dPCR) is a powerful technique for quantifying
-gene targets in environmental samples, with various applications such as
-biodiversity monitoring and wastewater-based epidemiology. However, statistical
-analyses of environmental dPCR data often assume, explicitly or implicitly, that
-concentration measurements have a normal or log-normal error structure, which
-does not reflect the underlying partitioning statistics of dPCR. Using
-simulations and real-world environmental data, we show that (log-)normality
-assumptions are violated for dPCR measurements, leading to inaccurate estimates
-of gene concentrations and underlying biological processes. To enable reliable
-analyses of environmental dPCR data, we present a dPCR-specific likelihood model
-that accounts for concentration-dependent measurement noise and non-detects as
-characteristic of dPCR assays. We demonstrate that this approach overcomes
-biases in inference from environmental data, such as estimating free-eDNA decay
-in seawater or pathogen transmission from wastewater monitoring. Our method is
-implemented in the R packages
+gene targets in environmental samples, with applications ranging from
+biodiversity monitoring to wastewater-based epidemiology. Although accurate
+statistical models for analyzing dPCR measurements exist, these require exact
+assay parameters and the number of positive and total PCR partitions. In
+practice, however, many environmental studies and monitoring programs report
+only concentration estimates, assuming normally or log-normally distributed
+measurements. Such assumptions ignore key statistical features of PCR assays,
+including concentration-dependent measurement noise and non-detects, leading to
+biased environmental estimates. In this work, we present a Bayesian model with a
+dPCR-specific likelihood that can be fitted directly to reported concentrations,
+while incorporating uncertainty in assay parameters through interpretable
+priors. Using real-world case studies of free-eDNA decay in seawater and
+pathogen transmission from wastewater, we show that our approach yields similar
+estimates as a fully informed model with partition counts, while avoiding biases
+from normal or log-normal approximations. This enables accurate inference from
+dPCR measurements even when partition count data and assay parameters are
+unavailable. The method is implemented in the R packages
 [dPCRfit](https://github.com/adrian-lison/dPCRfit/) for regression analyses and
 [EpiSewer](https://adrian-lison.github.io/EpiSewer/) for wastewater
 surveillance.
 
 ## Contents of this repository
-*Code version: v2.0.0*
+*Code version: v2.0.1*
 
 This repository contains the simulation code, data, and analysis scripts of the
 study "Improving inference in environmental surveillance by modelling the
@@ -55,17 +58,23 @@ The analysis scripts are written as R notebooks and are ideally run in an Rstudi
 project. When opening the project, run `renv::restore()` to install all required
 R packages (requires the `renv` package).
 
-Note that the R packages [dPCRfit v0.0.2](https://doi.org/10.5281/zenodo.15089580) 
-and [EpiSewer v0.0.3](https://doi.org/10.5281/zenodo.13899759) were used
-for inference from concentration measurements in this study. To ensure
+Note that the R packages [dPCRfit v0.0.3](https://doi.org/10.5281/zenodo.16942055) 
+and a development version of 
+[EpiSewer](https://github.com/adrian-lison/EpiSewer/tree/189ee984aaef075c6e8d62980b2b05565a29571b) 
+were used for inference from concentration measurements in this study. To ensure
 reproducibility, `renv` will automatically install this version of the package.
 Newer versions of the package may be found on the 
 [dPCRfit](https://github.com/adrian-lison/dPCRfit) and 
 [EpiSewer](https://github.com/adrian-lison/EpiSewer) Github repositories.
 
 ### Simulation study
-To reproduce the model validation via simulation, run the notebook
+To reproduce the simulation-based validation of approximations for the
+coefficient of variation and the probability of non-detection, run the notebook
 [CV_p_nondetect_sim.Rmd](notebooks/dPCR%20paper/CV_p_nondetect_sim.Rmd).
+
+To reproduce the simulation-based validation of linear regression using the
+dPCR-specific likelihood, run the notebook
+[concentration-regression.Rmd](notebooks/dPCR%20paper/concentration_regression.Rmd).
 
 ### Real-world validation
 To reproduce the comparison with empirical data, run the notebook 
@@ -83,7 +92,7 @@ To reproduce the reanalysis of eDNA measurements by Scriver et al., run the
 notebook [aquarium_Scriver_et_al.Rmd](notebooks/dPCR%20paper/aquarium_Scriver_et_al.Rmd).
 
 To reproduce the analysis of wastewater measurements with different noise models, run the notebook
-[noise_model_comparison.Rmd](notebooks/dPCR%20paper/noise_model_comparison.Rmd).
+[wastewater_noise_model_comparison.Rmd](notebooks/dPCR%20paper/wastewater_noise_model_comparison.Rmd).
 
 ### Additional results
 
@@ -103,7 +112,7 @@ The script [utils_dPCR_statistics.R](code/utils_dPCR_statistics.R) contains
 various functions to compute the coefficient of variation and the probability of
 non-detection for dPCR measurements.
 
-The script [_noise_model_comparison.R](pipelines/_noise_model_comparison.R) and
+The script [_wastewater_noise_model_comparison.R](pipelines/_wastewater_noise_model_comparison.R) and
 the utility scripts in [code/pipeline](code/pipeline) show how to fit wastewater
 models in [EpiSewer](https://adrian-lison.github.io/EpiSewer/) using a modeling
 pipeline via the [targets](https://books.ropensci.org/targets/) package.
