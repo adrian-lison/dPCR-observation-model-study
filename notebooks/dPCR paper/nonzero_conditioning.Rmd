@@ -37,9 +37,9 @@ example_cv <- 0
 ```{r}
 conditional_df <- data.frame(lambda = seq(0.01, 14, 0.01)) |> 
   mutate(
-    p_nondetect = sapply(lambda, est_nondetection_prob_pre, n = n, c = c, cv = example_cv, n_replicates = n_replicates, noise_dist = "lnorm"),
+    p_nondetect = sapply(lambda, est_nondetection_prob_pre, m_partitions = n, c = c, cv = example_cv, n_replicates = n_replicates, noise_dist = "lnorm"),
     mean_unconditional = lambda,
-    cv_unconditional = sapply(lambda, est_cv_pre_lnorm, n = n, c = c, cv = example_cv, n_replicates = n_replicates),
+    cv_unconditional = sapply(lambda, est_cv_pre_lnorm, m_partitions = n, c = c, cv = example_cv, n_replicates = n_replicates),
     mean_conditional = lambda / (1-p_nondetect),
     cv_conditional = suppressWarnings(sqrt(cv_unconditional^2*(1-p_nondetect) - p_nondetect))
     ) |> 

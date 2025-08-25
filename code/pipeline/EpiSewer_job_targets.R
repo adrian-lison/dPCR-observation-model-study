@@ -14,16 +14,36 @@ EpiSewer_job_targets <- list(
         shift_sd = sensitivity_incubation[[1]]$shift_sd
       )
       
-      shedding_dist <- get_shedding_dist(
+      shedding_dist_info <- get_shedding_dist_info(
         target = data_selection_EpiSewer$target_select,
         shift_mean = sensitivity_shedding[[1]]$shift_mean,
         shift_cv = sensitivity_shedding[[1]]$shift_cv
       )
       
+      if (shedding_dist_info$shedding_reference == "infection") {
+        incubation_dist <- NULL
+      }
+      if (shedding_dist_info$estimate) {
+        shedding_dist <- NULL
+        shedding_dist_mean_prior_mean <- shedding_dist_info$shedding_dist_mean_prior_mean
+        shedding_dist_mean_prior_sd <- shedding_dist_info$shedding_dist_mean_prior_sd
+        shedding_dist_cv_prior_mean <- shedding_dist_info$shedding_dist_cv_prior_mean
+        shedding_dist_cv_prior_sd <- shedding_dist_info$shedding_dist_cv_prior_sd
+        shedding_dist_type <- shedding_dist_info$shedding_dist_type
+      } else {
+        shedding_dist <- shedding_dist_info$shedding_dist
+        shedding_dist_mean_prior_mean <- NULL
+        shedding_dist_mean_prior_sd <- NULL
+        shedding_dist_cv_prior_mean <- NULL
+        shedding_dist_cv_prior_sd <- NULL
+        shedding_dist_type <- NULL
+      }
+      
       load_per_case <- get_load_per_case(
-        wwtp = data_selection_EpiSewer$wwtp_select,
-        target = data_selection_EpiSewer$target_select,
-        multiplier = sensitivity_load_per_case[[1]]$multiplier
+        wwtp_select = data_selection_EpiSewer$wwtp_select,
+        target_select = data_selection_EpiSewer$target_select,
+        multiplier = sensitivity_load_per_case[[1]]$multiplier,
+        load_per_case_data = load_per_case_data
       )
       
       selection <- c(
@@ -37,7 +57,6 @@ EpiSewer_job_targets <- list(
           sensitivity_shedding = sensitivity_shedding,
           load_per_case = load_per_case,
           sensitivity_load_per_case = sensitivity_load_per_case,
-          subsampling = subsampling,
           module_measurements = names(module_measurements[1]),
           module_sampling = names(module_sampling[1]),
           module_sewage = names(module_sewage[1]),
@@ -47,12 +66,15 @@ EpiSewer_job_targets <- list(
         )
       )
       
-      if (aggregate_data[1]) {
-        selected_measurements <- data_PCR_agg_select |> 
-          dplyr::filter(sapply(date,subsampling[[1]]$subsampling_f), !is_outlier)
+      if (data_handling_opts[[1]]$aggregate_data) {
+        selected_measurements <- data_PCR_agg_select
       } else {
-        selected_measurements <- data_PCR_select |> 
-          dplyr::filter(sapply(date,subsampling[[1]]$subsampling_f), !is_outlier)
+        selected_measurements <- data_PCR_select
+      }
+      
+      if (data_handling_opts[[1]]$remove_outliers) {
+        selected_measurements <- selected_measurements |> 
+          dplyr::filter(!is_outlier)
       }
       
       inputs <- list(
@@ -62,6 +84,19 @@ EpiSewer_job_targets <- list(
         selected_measurements = selected_measurements
       )
       
+      ww_assumptions <- EpiSewer::sewer_assumptions(
+        generation_dist = generation_dist,
+        incubation_dist = incubation_dist,
+        shedding_dist = shedding_dist,
+        shedding_reference = shedding_dist_info$shedding_reference,
+        load_per_case = load_per_case,
+        shedding_dist_mean_prior_mean = shedding_dist_mean_prior_mean,
+        shedding_dist_mean_prior_sd = shedding_dist_mean_prior_sd,
+        shedding_dist_cv_prior_mean = shedding_dist_cv_prior_mean,
+        shedding_dist_cv_prior_sd = shedding_dist_cv_prior_sd,
+        shedding_dist_type = shedding_dist_type
+      )
+      
       return(tryCatch(
         {
           ww_res <- EpiSewer::EpiSewer(
@@ -69,13 +104,7 @@ EpiSewer_job_targets <- list(
               measurements = selected_measurements,
               flows = data_flow_select
             ),
-            assumptions = EpiSewer::sewer_assumptions(
-              generation_dist = generation_dist,
-              incubation_dist = incubation_dist,
-              shedding_dist = shedding_dist,
-              shedding_reference = "symptom_onset",
-              load_per_case = load_per_case
-            ),
+            assumptions = ww_assumptions,
             measurements = module_measurements[[1]],
             sampling = module_sampling[[1]],
             sewage = module_sewage[[1]],
@@ -88,9 +117,16 @@ EpiSewer_job_targets <- list(
           )
           ww_res$job$job_dir <- file.path(basename(tar_path_store()), "results")
           ww_res$job$job_target_name <- tar_name()
+          if (exists("job_EpiSewer_ignore_seed") && job_EpiSewer_ignore_seed) {
+            seed_tmp <- ww_res$job$fit_opts$sampler$seed
+            ww_res$job$fit_opts$sampler$seed <- 0
+          }
           ww_res$job$job_name <- paste0(basename(tar_path_store()),"_EpiSewer_", digest::digest(
             EpiSewer::get_checksums(ww_res$job), algo = "md5"
           ))
+          if (exists("job_EpiSewer_ignore_seed") && job_EpiSewer_ignore_seed) {
+            ww_res$job$fit_opts$sampler$seed <- seed_tmp
+          }
           ww_res$job$selection <- selection
           ww_res$inputs <- inputs
           return(ww_res)
@@ -126,8 +162,6 @@ EpiSewer_job_targets <- list(
       sensitivity_incubation,
       sensitivity_shedding,
       sensitivity_load_per_case,
-      # subsampling
-      subsampling,
       # modules
       module_measurements,
       module_sampling,
@@ -138,7 +172,7 @@ EpiSewer_job_targets <- list(
       # options
       fit_opts,
       results_opts,
-      aggregate_data
+      data_handling_opts
     ),
     iteration = "list"
   ),

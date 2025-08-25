@@ -22,7 +22,7 @@ data_targets <- list(
   ## dPCR measurements ----
   tar_target(
     file_ww_data,
-    here::here("data", "ww_data", "dPCR_time_series_IAV_Zurich_Geneva.csv"),
+    here::here("data", "ww_data", "dPCR_time_series_IAV_Zurich.csv"),
     format = "file"
   ),
   tar_target(
@@ -31,12 +31,18 @@ data_targets <- list(
       file_ww_data,
       skip = 1,
       col_names = c(
-        "wwtp", "date", "target",
-        "assay", "gc_per_lww",
-        "replicate_id", "dilution", "total_droplets"
+        "wwtp",
+        "date",
+        "target", 
+        "assay",
+        "replicate_id",
+        "total_droplets",
+        "positive_droplets", 
+        "gc_per_lww", 
+        "dilution"
       ),
       col_types = readr::cols(
-        date = readr::col_date(format = "%Y-%m-%dT%H:%M:%SZ"),
+        date = readr::col_date(format = "%Y-%m-%d"),
         gc_per_lww = readr::col_double()
       ),
       show_col_types = F
@@ -56,12 +62,16 @@ data_targets <- list(
     {
     measurements <- ww_data |> dplyr::filter(
       wwtp == wwtp_select,
-      assay == assay_select,
+      assay %in% assay_select[[1]],
       target == target_select,
       date >= date_select[[1]][["from"]], date <= date_select[[1]][["to"]]
-    ) |> 
+    )
+    if (nrow(measurements) == 0) {
+      stop("Filtering by selection produced empty wastewater data.frame!")
+    }
+    measurements <- measurements |>
       dplyr::mutate(gc_per_mlww = gc_per_lww / 1000) |> 
-      dplyr::select(target, wwtp, date, gc_per_mlww, dilution, total_droplets) |> 
+      dplyr::select(target, wwtp, date, gc_per_mlww, dilution, total_droplets, positive_droplets) |> 
       dplyr::group_by(target, wwtp, date) |>
       dplyr::mutate(replicate_id = 1:dplyr::n())
     data.table::setDT(measurements)
@@ -115,7 +125,7 @@ data_targets <- list(
   ## flow ----
   tar_target(
     file_flow_data,
-    here::here("data", "ww_data", "flow_time_series_Zurich_Geneva.csv"),
+    here::here("data", "ww_data", "flow_time_series_Zurich.csv"),
     format = "file"
   ),
   tar_target(
@@ -129,7 +139,15 @@ data_targets <- list(
         wwtp == wwtp_select,
         date >= date_select[[1]][["from"]],
         date <= date_select[[1]][["to"]] + 28 # this allows for up to 4 weeks forecast
-      ),
+      ) |> 
+      dplyr::group_by(wwtp, date) |> 
+      dplyr::summarize(flow = dplyr::first(flow), .groups = "drop") |> 
+      dplyr::mutate(flow = flow * 1000 * 1000) |> 
+      dplyr::filter(flow > 0) |> # impute zero flows 
+      fill_missing_flow(
+        earliest_date = date_select[[1]][["from"]],
+        latest_date = date_select[[1]][["to"]] + 28
+      ),,
     pattern = cross(wwtp_select, assay_select, date_select, target_select),
     iteration = "list"
   ),
@@ -139,6 +157,8 @@ data_targets <- list(
    iteration = "list"
   )
 )
+
+b <- data.table::rbindlist(readRDS("pipelines/_noise_model_comparison/objects/data_flow_select"))
 
 ## EpiSewer_job_targets ----
 source("code/pipeline/EpiSewer_job_targets.R")

@@ -1,0 +1,3 @@
+_wastewater_noise_model_comparison:
+  script: pipelines/_wastewater_noise_model_comparison.R
+  store: pipelines/_wastewater_noise_model_comparison

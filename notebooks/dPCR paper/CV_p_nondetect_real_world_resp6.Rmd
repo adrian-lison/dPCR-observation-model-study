@@ -1,5 +1,5 @@
 ---
-title: "Real-world validation of CV and probability non-detection"
+title: "Real-world validation of CV and probability of non-detection"
 ---
 
 ## Preparation
@@ -64,7 +64,7 @@ empirical_cv_resp6 <- resp6_latest |>
 ```{r}
 cv_pred <- expand.grid(concWW_mean = seq(0.01, 1000, 0.01) * 30, cv = c(0, 0.5, 1, 1.5)) |> 
   mutate(concWW_cv = mapply(est_cv_pre_gamma,
-    la = concWW_mean, c = 1.73e-5, n = 22665, cv = cv
+    la = concWW_mean, c = 1.73e-5, m_partitions = 22665, cv = cv
     )) |> mutate(cv = as.factor(cv))
 
 cv_pred <- cv_pred |> 
@@ -158,6 +158,7 @@ empirical_cv_loess <- empirical_cv_resp6 |>
   filter(concWW_mean < upperWW, Target != "SARS-N1") |> 
   mutate(Target = recode(Target, !!!virus_names))
 ```
+
 ```{r}
 empirical_cv_loess |>
     inner_join(
@@ -214,7 +215,7 @@ roll_p <- roll_p |> mutate(target = recode(target, "IAV-M" = "Influenza A virus"
 ### Theoretical
 ```{r}
 theoretical_p <- expand.grid(x = seq(0, 30, 0.05), cv = c(0, 0.5, 1, 1.5)) |> 
-  mutate(p = mapply(est_nondetection_prob_pre, lambda = x, cv = cv, c = 1.73e-5, n = 22665, noise_dist = "gamma")) |>
+  mutate(p = mapply(est_nondetection_prob_pre, lambda = x, cv = cv, c = 1.73e-5, m_partitions = 22665, noise_dist = "gamma")) |>
   mutate(cv = as.factor(cv))
 
 ```

@@ -219,21 +219,24 @@ model {
 }
 generated quantities {
   real predicted_concentration;
-  real meas_conc;
-  real above_LOD;
 
-  above_LOD = bernoulli_rng(1-p_zero[1]);
+  {
+    real meas_conc;
+    real isnonzero;
 
-  if (obs_dist == 0) {
-    meas_conc = gamma3_rng(mean_conditional, cv_conditional)[1];
-  } else if (obs_dist == 1) {
-    meas_conc = lognormal5_rng(mean_conditional, cv_conditional)[1];
-  } else if (obs_dist == 2) {
-    meas_conc = normal2_rng(mean_conditional, cv_conditional, 0)[1]; // truncated at zero
-  } else if (obs_dist == 3) {
-    meas_conc = normal2_rng(mean_conditional, cv_conditional)[1];
-  } else {
-    reject("Distribution not supported.");
+    isnonzero = bernoulli_rng(1-p_zero[1]);
+
+    if (obs_dist == 0) {
+      meas_conc = gamma3_rng(mean_conditional, cv_conditional)[1];
+    } else if (obs_dist == 1) {
+      meas_conc = lognormal5_rng(mean_conditional, cv_conditional)[1];
+    } else if (obs_dist == 2) {
+      meas_conc = normal2_rng(mean_conditional, cv_conditional, 0)[1]; // truncated at zero
+    } else if (obs_dist == 3) {
+      meas_conc = normal2_rng(mean_conditional, cv_conditional)[1];
+    } else {
+      reject("Distribution not supported.");
+    }
+    predicted_concentration = isnonzero * meas_conc;
   }
-  predicted_concentration = above_LOD * meas_conc;
 }

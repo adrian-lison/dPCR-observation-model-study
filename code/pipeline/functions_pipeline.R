@@ -38,7 +38,8 @@ aggregate_replicates_mean <- function(data_pcr, key_cols) {
       n_reps = .N,
       is_outlier = any(is_outlier, na.rm = T),
       dilution = mean(dilution, na.rm = T),
-      total_droplets = mean(total_droplets, na.rm = T)
+      total_droplets = mean(total_droplets, na.rm = T),
+      positive_droplets = mean(positive_droplets, na.rm = T)
       ), by = key_cols
   ]
   data.table::setorderv(data_pcr, cols = key_cols)

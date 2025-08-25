@@ -30,45 +30,48 @@ rerun_computations <- FALSE
 
 Computation of coefficient of variation (via simulation and analytical approximations)
 ```{r}
-compute_dat_cv_pre <- function(example_n_replicates, example_c, example_ndroplets, example_cv_values, example_lambda_values, simulate = FALSE, seed = 0) {
+compute_dat_cv_pre <- function(example_n_replicates, example_c, example_m_partitions, example_cv_values, example_lambda_values, simulate = FALSE, seed = 0) {
   set.seed(seed)
   
-  dat_cv_pre <- expand.grid(example_lambda_values, example_c, example_ndroplets, example_cv_values, example_n_replicates)
-  names(dat_cv_pre) <- c("lambda", "c", "ndroplets", "cv", "n_replicates")
+  dat_cv_pre <- expand.grid(example_lambda_values, example_c, example_m_partitions, example_cv_values, example_n_replicates)
+  names(dat_cv_pre) <- c("lambda", "c", "m_partitions", "cv", "n_replicates")
+  
+  # randomly draw numbers of partitions across replicates, such that the mean number of partitions matches dat_cv_pre$m_partitions
+  dat_cv_pre$m_partitions <- mapply(function(m, n) rmultinom(1, m * n, 2^(1:n))[,1], m = dat_cv_pre$m_partitions, n = dat_cv_pre$n_replicates)
 
   # simulation
   if (simulate) {
     # simulation for gamma
     dat_cv_pre$conc_cv_sim_gamma = parallel::mcmapply(sim_cv_pre,
-      la = dat_cv_pre$lambda, c = dat_cv_pre$c, n = dat_cv_pre$ndroplets,
+      lambda = dat_cv_pre$lambda, c = dat_cv_pre$c, m_partitions = dat_cv_pre$m_partitions,
       cv = dat_cv_pre$cv, n_replicates = dat_cv_pre$n_replicates,
       distribution = "gamma", n_samples = 1e04, mc.cores = 8
       )
   
     # simulation for lognormal
-  dat_cv_pre$conc_cv_sim_lnorm = parallel::mcmapply(sim_cv_pre,
-    la = dat_cv_pre$lambda, c = dat_cv_pre$c, n = dat_cv_pre$ndroplets,
-    cv = dat_cv_pre$cv, n_replicates = dat_cv_pre$n_replicates,
-    distribution = "lnorm", n_samples = 1e04, mc.cores = 8
-    )
+    dat_cv_pre$conc_cv_sim_lnorm = parallel::mcmapply(sim_cv_pre,
+      lambda = dat_cv_pre$lambda, c = dat_cv_pre$c, m_partitions = dat_cv_pre$m_partitions,
+      cv = dat_cv_pre$cv, n_replicates = dat_cv_pre$n_replicates,
+      distribution = "lnorm", n_samples = 1e04, mc.cores = 8
+      )
   
   }
 
   # gamma
   dat_cv_pre$conc_cv_gamma = mapply(est_cv_pre_gamma,
-    la = dat_cv_pre$lambda, c = dat_cv_pre$c, n = dat_cv_pre$ndroplets,
+    lambda = dat_cv_pre$lambda, c = dat_cv_pre$c, m_partitions = dat_cv_pre$m_partitions,
     cv = dat_cv_pre$cv, n_replicates = dat_cv_pre$n_replicates
     )
   
   # # log-normal
   dat_cv_pre$conc_cv_lnorm = mapply(est_cv_pre_lnorm,
-    la = dat_cv_pre$lambda, c = dat_cv_pre$c, n = dat_cv_pre$ndroplets,
+    lambda = dat_cv_pre$lambda, c = dat_cv_pre$c, m_partitions = dat_cv_pre$m_partitions,
     cv = dat_cv_pre$cv, n_replicates = dat_cv_pre$n_replicates
     )
   
   # taylor series approximation
   dat_cv_pre$conc_cv_taylor = mapply(est_cv_pre_taylor,
-    la = dat_cv_pre$lambda, c = dat_cv_pre$c, n = dat_cv_pre$ndroplets,
+    lambda = dat_cv_pre$lambda, c = dat_cv_pre$c, m_partitions = dat_cv_pre$m_partitions,
     cv = dat_cv_pre$cv, n_replicates = dat_cv_pre$n_replicates
     )
   
@@ -103,7 +106,7 @@ if (rerun_computations) {
   dat_cv_pre <- compute_dat_cv_pre(
     example_n_replicates = c(1,2),
     example_c = 0.519e-6 * 30,
-    example_ndroplets = 25000,
+    example_m_partitions = 25000, # avg number of partitions per replicate
     example_cv_values = c(0, 0.5, 1, 1.5, 2),
     example_lambda_values = seq(0.001, 15, 0.1),
     simulate = TRUE,
@@ -184,7 +187,7 @@ if (rerun_computations) {
   dat_cv_pre_wide <- compute_dat_cv_pre(
     example_n_replicates = c(1,2),
     example_c = 0.519e-6 * 30,
-    example_ndroplets = 25000,
+    example_m_partitions = 25000, # avg number of partitions per replicate
     example_cv_values = c(0, 0.05, 0.1, 0.15),
     example_lambda_values <- c(
       seq(0.001, 2.9, 0.1),
@@ -229,7 +232,7 @@ if (rerun_computations) {
   dat_cv_pre_sensitivity_c <- compute_dat_cv_pre(
     example_n_replicates = c(1,2),
     example_c = c(0.519e-6 * 30, 0.519e-6 * 30 / 10, 0.519e-6 * 30 * 10),
-    example_ndroplets = 25000,
+    example_m_partitions = 25000, # avg number of partitions per replicate
     example_cv_values = c(0.5),
     example_lambda_values = seq(0.001, 15, 0.1),
     simulate = TRUE,
@@ -272,7 +275,7 @@ if (rerun_computations) {
   dat_cv_pre_sensitivity_m <- compute_dat_cv_pre(
     example_n_replicates = c(1,2),
     example_c = 0.519e-6 * 30,
-    example_ndroplets = c(25000, 10000, 40000),
+    example_m_partitions = c(25000, 10000, 40000), # avg number of partitions per replicate
     example_cv_values = c(0.5),
     example_lambda_values = seq(0.001, 15, 0.1),
     simulate = TRUE,
@@ -298,11 +301,11 @@ dat_cv_pre_sensitivity_m <- readRDS(here::here("data", "results", "dat_cv_pre_se
 ```{r}
 (dat_cv_pre_sensitivity_m |> 
   mutate(
-    ndroplets = factor(ndroplets, levels = c(25000, 10000, 40000))
+    m_partitions = factor(sapply(m_partitions, mean), levels = c(25000, 10000, 40000))
     ) |> 
 ggplot(aes(x=lambda)) + 
-  geom_line(aes(y = conc_cv_sim_gamma, color = ndroplets, group = ndroplets), alpha = 0.5) + 
-  geom_line(aes(y  = conc_cv_gamma, color = ndroplets, group = ndroplets))) |> 
+  geom_line(aes(y = conc_cv_sim_gamma, color = m_partitions, group = m_partitions), alpha = 0.5) + 
+  geom_line(aes(y  = conc_cv_gamma, color = m_partitions, group = m_partitions))) |> 
   format_cv_plot() +
   scale_color_discrete(name = "Total number of droplets")
 
@@ -315,22 +318,23 @@ ggsave(here::here("figures", "dPCR paper", "cv_pre_sensitivity_m.pdf"), width = 
 
 Computation of probability of non-detection (via simulation and analytical approximations)
 ```{r}
-compute_nondetection_probs <- function(example_lambda_values, example_c, example_total_partitions, example_cv, noise_dist, example_replicates, seed = 0) {
+compute_nondetection_probs <- function(example_lambda_values, example_c, example_m_partitions, example_cv, noise_dist, example_replicates, seed = 0) {
 set.seed(seed)
 nondetection_probs <- bind_rows(lapply(example_replicates, function(n_replicates) {
   nondetection_probs <- bind_rows(lapply(example_cv, function(technical_cv) {
     nondetection_probs <- data.frame(cv = technical_cv, lambda = example_lambda_values)
+    m_partitions_draws <- mapply(function(m, n) rmultinom(1, m * n, 2^(1:n))[,1], m = example_m_partitions, n = n_replicates)
     nondetection_probs$simulated <- parallel::mcmapply(sim_nondetection_prob_pre,
       lambda = nondetection_probs$lambda,
       c = example_c,
-      n=example_total_partitions,
+      m_partitions = list(m_partitions_draws),
       cv = technical_cv,
       n_replicates = n_replicates,
       noise_dist = noise_dist,
       mc.cores = 4
       )
     nondetection_probs$theoretical <- sapply(nondetection_probs$lambda, est_nondetection_prob_pre,
-      c = example_c, n=example_total_partitions,
+      c = example_c, m_partitions = m_partitions_draws,
       cv = technical_cv,
       n_replicates = n_replicates,
       noise_dist = noise_dist
@@ -369,7 +373,7 @@ if (rerun_computations) {
   nondetection_probs_lnorm <- compute_nondetection_probs(
     example_lambda_values = seq(0.001,15,by=0.1),
     example_c = 0.519e-6 * 30,
-    example_total_partitions = 25000,
+    example_m_partitions = 25000, # avg number of partitions per replicate
     example_cv = c(0, 0.5, 1, 1.5, 2),
     noise_dist = "lognormal",
     example_replicates = c(1,2),
@@ -402,7 +406,7 @@ if (rerun_computations) {
   nondetection_probs_gamma <- compute_nondetection_probs(
     example_lambda_values = seq(0.001,15,by=0.1),
     example_c = 0.519e-6 * 30,
-    example_total_partitions = 25000,
+    example_m_partitions = 25000, # avg number of partitions per replicate
     example_cv = c(0, 0.5, 1, 1.5, 2),
     noise_dist = "gamma",
     example_replicates = c(1,2),
@@ -433,12 +437,12 @@ ggsave(prob_nondetection_plot_gamma, filename = here::here("figures", "dPCR pape
 
 Non-detection probability without pre-PCR noise
 ```{r}
-est_nondetection_prob(5, c = 1.73e-5, n = 25000, n_replicates = 1)
+est_nondetection_prob(5, c = 1.73e-5, m_partitions = 25000, n_replicates = 1)
 ```
 
 Non-detection probability with pre-PCR noise
 ```{r}
-est_nondetection_prob_pre(5, c = 1.73e-5, n = 25000, cv = 0.5, n_replicates = 1, noise_dist = "gamma")
+est_nondetection_prob_pre(5, c = 1.73e-5, m_partitions = 25000, cv = 0.5, n_replicates = 1, noise_dist = "gamma")
 ```
 
 ## Combined figure

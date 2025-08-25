@@ -37,11 +37,22 @@ conc_data_all <- aquarium |>
     )
 ```
 
+Add partition information
+```{r}
+dPCR_partitions <- sapply(conc_data_all$Concentration, backcalc_partitions, c = 0.85*0.001, partitions_mean = 20000)
+conc_data_all$total_partitions <- as.numeric(dPCR_partitions["total",])
+conc_data_all$positive_partitions <- as.numeric(dPCR_partitions["positive",])
+conc_data_all$total_partitions[is.na(conc_data_all$total_partitions)] <- rnbinom2(
+  n = sum(is.na(conc_data_all$total_partitions)),
+  mean = mean(conc_data_all$total_partitions, na.rm = T), sd = sd(conc_data_all$total_partitions, na.rm = T)
+  )
+```
+
 ## Regression
 
 ```{r}
 rerun_models <- FALSE
-model_types <- c("Averaged", "Normal", "Log-Normal", "dPCR")
+model_types <- c("dPCR_binomial", "Averaged", "Normal", "Log-Normal", "dPCR")
 biomass_levels <- c("all", "low", "medium", "high")
 ```
 
@@ -90,7 +101,7 @@ if (rerun_models) {
           distribution = "normal"
         ),
         noise = noise_constant_var(
-          cv_prior_mu = 0, cv_prior_sigma = 0.5
+          cv_prior_mu = 0, cv_prior_sigma = 0.5, warn = FALSE
         ),
         nondetect = nondetect_none(),
         fit_opts = fit_opts
@@ -128,9 +139,38 @@ if (rerun_models) {
         ),
         noise = noise_dPCR(
           cv_prior_mu = 0, cv_prior_sigma = 0.5,
-          total_partitions_prior_mu = 20000, total_partitions_prior_sigma = 0,
-          partition_variation_prior_mu = 0, partition_variation_prior_sigma = 0,
-          volume_scaled_prior_mu = 1e-3, volume_scaled_prior_sigma = 0,
+          max_partitions_prior_lower = 10000,
+          max_partitions_prior_upper = 50000,
+          partition_loss_mean_prior_lower = 0.01,
+          partition_loss_mean_prior_upper = 0.3,
+          partition_loss_variation_prior_lower = 0.5,
+          partition_loss_variation_prior_upper = 2,
+          partition_loss_max = 0.5,
+          volume_scaled_prior_mu = 1e-3,
+          volume_scaled_prior_sigma = 0.5e-3,
+          prePCR_noise_type = "gamma"
+        ),
+        nondetect = nondetect_dPCR(),
+        fit_opts = fit_opts
+      )
+    } else if (model_type == "dPCR_binomial") {
+      fit <- dPCRfit(
+        formula = reg_formula,
+        data = conc_data,
+        link = "log",
+        prior_intercept = c(0, 0.5),
+        prior_coefficients = c(0, 0.5),
+        measurements = positive_partitions(
+          id_col = "Sample_ID",
+          positive_partitions_col = "positive_partitions",
+          total_partitions_col = "total_partitions",
+          n_averaged_col = "n_averaged"
+        ),
+        noise = noise_dPCR(
+          cv_prior_mu = 0, cv_prior_sigma = 0.5,
+          partitions_observe = TRUE,
+          volume_scaled_prior_mu = 0.85e-3,
+          volume_scaled_prior_sigma = 0,
           prePCR_noise_type = "gamma"
         ),
         nondetect = nondetect_dPCR(),
@@ -153,7 +193,7 @@ if (rerun_models) {
     diags <- res$fit$fit$diagnostic_summary()
     iters <- res$fit$fit_opts$sampler$iter_sampling + res$fit$fit_opts$sampler$iter_warmup
     data.frame(
-      model_type = factor(res$model_type, levels = c("Averaged", "Normal", "Log-Normal", "dPCR")),
+      model_type = factor(res$model_type, levels = c("Averaged", "Normal", "Log-Normal", "dPCR", "dPCR_binomial")),
       biomass_level = factor(res$biomass_level, levels = c("low", "medium", "high", "all"), ordered = TRUE),
       percent_divergent = sum(diags$num_divergent)/iters*100,
       percent_max_treedepth = sum(diags$num_max_treedepth)/iters*100,
@@ -172,7 +212,7 @@ print(diags)
 if (rerun_models) {
   regression_summary <- rbindlist(lapply(all_fits, function(res) {
     coef_summary <- res$fit$coef_summary
-    coef_summary[, model_type := factor(res$model_type, levels = c("Averaged", "Normal", "Log-Normal", "dPCR"))]
+    coef_summary[, model_type := factor(res$model_type, levels = c("Averaged", "Normal", "Log-Normal", "dPCR", "dPCR_binomial"))]
     coef_summary[, biomass_level := factor(res$biomass_level, levels = c("low", "medium", "high", "all"), ordered = TRUE)]
     setcolorder(coef_summary, c("model_type", "biomass_level", "variable"))
   }))
@@ -187,11 +227,11 @@ if (rerun_models) {
         mean = mean(half_life),
         median = median(half_life),
         sd = sd(half_life),
-        q5 = quantile(half_life, p = 0.05),
-        q95 = quantile(half_life, p = 0.95)
+        lower_95 = quantile(half_life, p = 0.025),
+        upper_95 = quantile(half_life, p = 0.975)
       ) |> 
       mutate(
-        model_type = factor(res$model_type, levels = c("Averaged", "Normal", "Log-Normal", "dPCR")),
+        model_type = factor(res$model_type, levels = c("Averaged", "Normal", "Log-Normal", "dPCR", "dPCR_binomial")),
         biomass_level = factor(res$biomass_level, levels = c("low", "medium", "high", "all"), ordered = TRUE),
         .before = 1)
   }))
@@ -223,7 +263,7 @@ if (rerun_models) {
       interval = "confidence",
       keep_data = TRUE
       )
-    preds[, model_type := factor(res$model_type, levels = c("Averaged", "Normal", "Log-Normal", "dPCR"))]
+    preds[, model_type := factor(res$model_type, levels = c("Averaged", "Normal", "Log-Normal", "dPCR", "dPCR_binomial"))]
     preds[, biomass_level := factor(res$biomass_level, levels = c("low", "medium", "high", "all"), ordered = TRUE)]
     setcolorder(preds, c("model_type", "biomass_level"))
   }), fill = TRUE)
@@ -243,22 +283,26 @@ regression_summary |>
 ```
 
 ### Half-life estimates
-```{r, fig.width=8, fig.height=2}
+
+```{r, fig.width=8, fig.height=3}
 halflife_plot <- regression_half_life |> 
-  mutate(biomass_level = factor(biomass_level, levels = c("low", "medium", "high", "all"), ordered = TRUE)) |> 
+  mutate(partitions_known = ifelse(model_type == "dPCR_binomial", "Partitions\n available", "Partitions\n not available")) |> 
+  filter(model_type != "Averaged", biomass_level != "all") |>
+  mutate(biomass_level = factor(biomass_level, levels = c("low", "medium", "high"), labels = rev(c("High biomass", "Medium biomass", "Low biomass")), ordered = TRUE)) |> 
   mutate(model_type = factor(
     model_type,
-    levels = rev(c("Averaged", "Normal", "Log-Normal", "dPCR")),
-    labels = rev(c("Original", "Normal", "Log-\n Normal", "dPCR")),
+    levels = rev(c("dPCR_binomial", "dPCR", "Normal", "Log-Normal")),
+    labels = rev(c("Binomial", "dPCR", "Normal", "Log-Normal")),
     ordered = T)
     ) |> 
   ggplot(aes(y = model_type, x = mean, color = model_type)) +
   geom_vline(xintercept = 0, linetype = "dashed", color = "black") +
   geom_vline(xintercept = 16.86489, linetype = "dotted", color = "darkred") +
-  geom_pointinterval(aes(xmin = q5, xmax = q95, x = median), size = 8, linewidth = 2.5) +
+  geom_pointinterval(aes(xmin = lower_95, xmax = upper_95, x = median), size = 8, linewidth = 2.5) +
   scale_x_continuous(breaks = seq(-200,200,20)) +
   coord_cartesian(xlim = c(-2, 65)) +
-  facet_wrap(~biomass_level, nrow = 1) +
+  facet_grid(partitions_known~biomass_level, scales = "free_y", ) +
+  #force_panelsizes(rows = c(1, 1.5)) +
   theme_bw() +
   theme(
     legend.position = "none",
@@ -266,32 +310,32 @@ halflife_plot <- regression_half_life |>
     strip.background = element_rect(fill = "#f2f2f2")
     ) +
   xlab("Half-life [hours]") +
-  scale_color_manual(values = rev(c("grey","#d31f11","#f47a00","#007191")))
+  scale_color_manual(values = rev(c("darkgrey","#007191","#d31f11","#f47a00")))
 halflife_plot
 ```
 
 ```{r}
-regression_half_life |> filter(model_type == "dPCR") |> select(model_type, biomass_level, median, q5, q95)
-regression_half_life |> filter(model_type == "Log-Normal") |> select(model_type, biomass_level, median, q5, q95)
-regression_half_life |> filter(model_type == "Normal") |> select(model_type, biomass_level, median, q5, q95)
-regression_half_life |> filter(model_type == "Averaged") |> select(model_type, biomass_level, median, q5, q95)
+regression_half_life |> filter(model_type == "dPCR_binomial") |> select(model_type, biomass_level, median, lower_95, upper_95)
+regression_half_life |> filter(model_type == "dPCR") |> select(model_type, biomass_level, median, lower_95, upper_95)
+regression_half_life |> filter(model_type == "Log-Normal") |> select(model_type, biomass_level, median, lower_95, upper_95)
+regression_half_life |> filter(model_type == "Normal") |> select(model_type, biomass_level, median, lower_95, upper_95)
 ```
 
 ### Model fit
 ```{r}
 measurements_to_plot <- conc_data_all |> rename(biomass_level = Biomass)
-measurements_to_plot <- rbindlist(list(
-  measurements_to_plot,
-  measurements_to_plot |> mutate(biomass_level = "all")
-  ), fill = T)
-regression_linear[, model_type := factor(model_type, labels = c("Original", "Normal", "Log-Normal", "dPCR"))]
+regression_linear_to_plot <- regression_linear[model_type != "Averaged",]
+regression_linear_to_plot <- regression_linear_to_plot[biomass_level != "all",]
+regression_linear_to_plot[, model_type := factor(model_type, levels = c("dPCR_binomial", "dPCR", "Normal", "Log-Normal"), labels = c("Binomial", "dPCR", "Normal", "Log-Normal"), ordered = T)]
+
+model_color_palette <- c("Binomial" = "darkgrey", "dPCR" = "#007191", "Normal" = "#d31f11", "Log-Normal" = "#f47a00")
 
 conc_plot <- ggplot(measurements_to_plot) +
   geom_vline(xintercept = 0, linetype = "dashed", color = "black") +
-  geom_ribbon(data = regression_linear, aes(x = Hours, ymin = q5, ymax = q95, fill = model_type), alpha = 0.2) +
-  geom_line(data = regression_linear, aes(x=Hours, y = mean, color = model_type)) +
+  geom_ribbon(data = regression_linear_to_plot, aes(x = Hours, ymin = lower_95, ymax = upper_95, fill = model_type), alpha = 0.2) +
+  geom_line(data = regression_linear_to_plot, aes(x=Hours, y = mean, color = model_type)) +
   geom_jitter(aes(x=Hours, y=Concentration), color = "black", size = 0.75, width = 0) +
-  facet_wrap(~factor(biomass_level, levels = rev(c("all", "high", "medium", "low")), labels = rev(c("All", "High biomass", "Medium biomass", "Low biomass"))), scales = "free_y", nrow = 1) +
+  facet_wrap(~factor(biomass_level, levels = rev(c("high", "medium", "low")), labels = rev(c("High biomass", "Medium biomass", "Low biomass"))), scales = "free_y") +
   theme_bw() +
   theme(
     legend.position = "top",
@@ -302,31 +346,37 @@ conc_plot <- ggplot(measurements_to_plot) +
   xlab("Time since removal of organism [hours]") +
   ylab(expression(paste("Concentration [gc/", mu, "L]"))) +
   coord_cartesian(xlim = c(-2, 70)) +
-  scale_fill_manual(values = c("grey","#d31f11","#f47a00","#007191")) +
-  scale_color_manual(values = c("grey","#d31f11","#f47a00","#007191"))
+  scale_fill_manual(values = model_color_palette) +
+  scale_color_manual(values = model_color_palette)
+  #scale_y_log10()
 conc_plot
 ```
 
 ### Combined figure
+```{r}
+cowplot::plot_grid(
+  halflife_plot,
+  conc_plot + theme(axis.title.y = element_blank(), plot.background = element_blank(), legend.position = "None"), ncol = 1, align = "v", axis = "lrtb")
+```
+
+
 ```{r, fig.width = 10, fig.height = 6}
 main_grid <- cowplot::plot_grid(
   cowplot::plot_grid(NULL, cowplot::get_plot_component(conc_plot, pattern = "guide-box-top"), nrow = 1, rel_widths = c(0.07, 0.93)),
   cowplot::plot_grid(
   halflife_plot + theme(plot.background = element_blank()),
   conc_plot + theme(axis.title.y = element_blank(), plot.background = element_blank(), legend.position = "None"),
-  ncol = 1, rel_heights = c(0.4, 0.6), align = "v", labels = "AUTO"),
+  ncol = 1, rel_heights = c(0.45, 0.55), align = "v", axis = "lr", labels = "AUTO"),
   ncol = 1, rel_heights = c(0.07, 0.93), align = "v", axis = "l"
 )
 
 cowplot::plot_grid(
   NULL,
-  cowplot::plot_grid(NULL, cowplot::get_plot_component(conc_plot, "ylab-l"), ncol = 1, rel_heights = c(0.35, 0.65)), 
+  cowplot::plot_grid(NULL, cowplot::get_plot_component(conc_plot, "ylab-l"), ncol = 1, rel_heights = c(0.45, 0.55)), 
   NULL,
   main_grid,
-  nrow = 1, rel_widths = c(0.005, 0.02, -0.03, 0.98)
+  nrow = 1, rel_widths = c(0.025, 0.02, -0.05, 0.98)
   )
 
 ggsave(here::here("~/Documents/dev/wastewater-generative", "figures", "dPCR paper", "aquarium_Bugula_neritina.pdf"), width = 10, height = 6)
 ```
-
-

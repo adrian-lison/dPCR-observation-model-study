@@ -2,7 +2,7 @@
 title: "Averaging of dPCR measurements"
 ---
 
-In this report, we study the question of whether it makes a difference to combine dPCR-based concentrations measurements from two technical replicates by averaging (i.e. arithmetic mean of concentrations) or by computing the ML estimate of the concentration from the combined partition counts. The example data used here is based on digital droplet PCR (ddPCR).
+This notebooks examines differences in dPCR-based concentrations estimates obtained from two technical replicates either obtained by empirical averaging (i.e. arithmetic mean of concentrations) or by computing the ML estimate of the concentration from the combined partition counts. The example data used here is based on digital droplet PCR (ddPCR).
 
 ```{r, echo = FALSE, output = FALSE}
 library(readr)
@@ -35,7 +35,7 @@ avg_sim <- expand_grid(droplet_difference = seq(0, 20000, by = 10), concentratio
     ) |> 
   group_by(droplet_difference, concentration) |> 
   summarize(
-    n = n(),
+    m_partitions = n(),
     minDroplets = min(TotalDroplets),
     maxDroplets = max(TotalDroplets),
     conc_avg = mean(-log(1 - PositiveDroplets/TotalDroplets)/(c)),
@@ -80,7 +80,7 @@ avg_sim |>
 ggsave(here::here("figures", "dPCR paper", "averaging_avg_vs_unweighted_conc.pdf"), height = 5, width = 10)
 ```
 
-We can also look at the deviation as a function of the difference in the total number of partitions. As we can see in the plot below, the deviation increases with the difference in the total number of partitions. This is not really an effect of the averaging, but only because when the total number of partitions differs a lot between replicates, one of the replicates will typically have a very low number of total partitions, and thus the estimated probability of positive partitions will be very noisy for that replicate. This in turn leads to larger differences between the probabilities to be averaged, and thus a more pronounced bias in expectation.
+We can also look at the deviation as a function of the difference in the total number of partitions. As we can see in the plot below, the deviation increases with the difference in the total number of partitions. This is not really an effect of the averaging. Rather, as the total number of partitions differs a lot between replicates, one of the replicates will typically have a very low number of total partitions, and thus the estimated probability of positive partitions will be very noisy for that replicate. This in turn leads to larger differences between the probabilities to be averaged, and thus a more pronounced bias in expectation.
 ```{r fig.width = 10, fig.height = 5, echo = FALSE}
 avg_sim |> filter(concentration %in% c(5, 20, 100, 500, 1000)) |> 
   mutate(concentration_label = forcats::fct_inorder(paste(concentration, "gc/mL"))) |> 
@@ -94,7 +94,7 @@ avg_sim |> filter(concentration %in% c(5, 20, 100, 500, 1000)) |>
 ### Weighting of replicates by the total number of partitions
 Now let's look at the effect of (not) weighting the replicates by the total number of partitions.
 
-Here we see that there is no bias resulting from the choice of weighting, but the possible deviations are larger than the bias shown in the previous section. Below we show deviations for differences in the total number of partitions below 2000 (which is the case for the majority of measurements).
+Here we see that there is no additional bias resulting from the choice of weighting, but the possible deviations are larger than the in the previous section. Below we show deviations for differences in the total number of partitions below 2000 (which is the case for the majority of measurements).
 ```{r fig.width = 10, fig.height = 5, echo = FALSE}
 avg_sim |> 
   slice_sample(prop = 1, replace = F) |> 
@@ -124,8 +124,7 @@ avg_sim |> filter(concentration %in% c(5, 20, 100, 500, 1000)) |>
 ```
 
 ### Quality of estimates
-Of course, the final question is, does this make the ML estimate better?
-The answer is: yes, slightly. The plot below compares the absolute error of the concentration estimates based on the averaging (blue) and ML (red) approach as a function of the concentration. The ribbons shows the 95% interval of absolute errors, while the lines show the median absolute error (MAE). According to the MAE, the ML estimate is slightly more accurate, however this difference is rather small compared to the variance of errors. To summarize, using the ML estimate instead of averaging concentrations can give you slightly better estimates, but it is not going to change the bigger picture unless your replicates have widely varying total partition numbers.
+Overall, these results show that the ML estimate provides more accurate results than the averaging approach. The plot below compares the absolute error of the concentration estimates based on the averaging (blue) and ML (red) approach as a function of the concentration. The ribbons shows the 95% interval of absolute errors, while the lines show the median absolute error (MAE). According to the MAE, the ML estimate is slightly more accurate, however this difference is rather small compared to the variance of errors. To summarize, using the ML estimate instead of averaging concentrations gives slightly better estimates, but it is not going to change the bigger picture unless the total number of partitions varies considerably between replicates.
 
 ```{r fig.width = 10, fig.height = 5, echo = FALSE}
 conc_avg_rolling_quantile <- rolling_quantile(avg_sim$concentration, abs(avg_sim$conc_avg_real_error), window_size = 100, stepsize = 50, quantile_val = 0.25)

@@ -1,0 +1,392 @@
+```{r setup, include = FALSE}
+knitr::opts_knit$set(root.dir = rprojroot::find_rstudio_root_file())
+```
+
+```{r}
+here::i_am("notebooks/dPCR paper/wastewater_noise_model_comparison.Rmd")
+```
+
+```{r}
+library(targets)
+library(dplyr)
+library(EpiSewer)
+library(ggplot2)
+library(stringr)
+source("code/local_config.R")
+source("code/pipeline/utils_pipeline.R")
+```
+
+```{r}
+setup_pipeline("_wastewater_noise_model_comparison")
+```
+
+## Preparation
+
+```{r setup, include = FALSE}
+knitr::opts_knit$set(root.dir = rprojroot::find_rstudio_root_file())
+```
+
+## Run pipeline
+
+All results are already available and will be loaded. If you want to rerun the models, set `submit = TRUE`.
+```{r, include = FALSE}
+run_pipeline(targets_proj_name = "_wastewater_noise_model_comparison", submit = FALSE)
+if(length(tar_read(jobs_EpiSewer_invalid))>0) {
+  warning("There are invalid jobs.")
+}
+```
+
+```{r}
+tar_load(job_EpiSewer_submission)
+
+job_EpiSewer_submission |> 
+  mutate(total = 1, .before = exists) |>
+  summarise(across(total:submitted, sum, na.rm = T))
+```
+
+## Load results
+```{r}
+setup_pipeline("_wastewater_noise_model_comparison")
+tar_load(job_EpiSewer_result)
+tar_load(data_PCR_select)
+```
+
+## Main figure
+
+```{r}
+intervals_plot <- c(0.5, 0.95)
+
+conc_plot_f <- function(res_list, PCR_data_plot, PCR_data_full, first_estim_date, last_estim_date, color_values, conc_lim) {
+  plot_concentration(
+    res_list, base_model = "Binomial likelihood",
+    measurements = PCR_data_plot[, c("date", "gc_per_mlww")],
+    median = T, concentration_col = "gc_per_mlww",
+    facet_models = TRUE, facet_direction = "cols",
+    forecast = F, intervals = intervals_plot
+    ) + 
+    scale_color_manual(values = color_values) +
+    scale_fill_manual(values = color_values) +
+    ggpattern::scale_pattern_color_manual(values = color_values) +
+    ggpattern::scale_pattern_fill_manual(values = color_values) +
+    coord_cartesian(ylim = c(0, conc_lim), xlim = c(as.Date(first_estim_date), NA)) + 
+    scale_y_continuous(expand = expansion(add = c(0.5,0))) +
+    theme(
+      axis.title.x = element_blank()
+    ) +
+    geom_point(
+      data = PCR_data_full[date <= last_estim_date, c("date", "gc_per_mlww")],
+      aes(x=date, y=gc_per_mlww),
+      color = "black", shape = 4
+      ) + 
+    ylab("Concentration [gc/mL]")
+}
+
+load_plot_f <- function(res_list, PCR_data_plot, first_estim_date, last_estim_date, color_values, load_lim) {
+  plot_load(
+    res_list, base_model = "Binomial likelihood",
+    median = T,
+    facet_models = TRUE, facet_direction = "cols",
+    forecast = F, intervals = intervals_plot
+    ) + 
+    scale_color_manual(values = color_values) +
+    scale_fill_manual(values = color_values) +
+    ggpattern::scale_pattern_color_manual(values = color_values) +
+    ggpattern::scale_pattern_fill_manual(values = color_values) +
+    coord_cartesian(ylim = c(0, load_lim), xlim = c(as.Date(first_estim_date), NA)) +
+    scale_y_continuous(expand = expansion(add = c(0.5,0))) +
+    theme(
+      axis.title.x = element_blank()
+    ) +
+    geom_vline(xintercept = last_estim_date, color = "grey", linetype = "dotted")
+}
+
+inf_plot_f <- function(res_list, PCR_data_plot, first_estim_date, last_estim_date, color_values){
+  plot_infections(
+    res_list, base_model = "Binomial likelihood",
+    median = T,
+    facet_models = TRUE, facet_direction = "cols",
+    seeding = T,
+    forecast = F, intervals = intervals_plot
+    ) + 
+    scale_color_manual(values = color_values) +
+    scale_fill_manual(values = color_values) +
+    ggpattern::scale_pattern_color_manual(values = color_values) +
+    ggpattern::scale_pattern_fill_manual(values = color_values) +
+    coord_cartesian(ylim = c(0, NA), xlim = c(as.Date(first_estim_date), NA)) +
+    scale_y_continuous(expand = expansion(add = c(0.5,0))) +
+    theme(
+      axis.title.x = element_blank()
+    ) +
+    geom_vline(xintercept = last_estim_date, color = "grey", linetype = "dotted")
+}
+
+R_plot_f <- function(res_list, PCR_data_plot, first_estim_date, last_estim_date, color_values, R_lim){
+  plot_R(
+    res_list, base_model = "Binomial likelihood",
+    median = T,
+    facet_models = TRUE, facet_direction = "cols",
+    seeding = T,
+    forecast = F, intervals = intervals_plot
+    ) + 
+    scale_color_manual(values = color_values) +
+    scale_fill_manual(values = color_values) +
+    ggpattern::scale_pattern_color_manual(values = color_values) +
+    ggpattern::scale_pattern_fill_manual(values = color_values) +
+    coord_cartesian(ylim = R_lim, xlim = c(as.Date(first_estim_date), NA)) +
+    theme(
+      axis.title.x = element_blank()
+    ) +
+    geom_vline(xintercept = last_estim_date, color = "grey", linetype = "dotted") +
+    scale_y_continuous(name = expression(Reproduction~number~R[t]))
+}
+```
+
+dummy plot for legend
+```{r}
+model_color_palette <- c("Binomial" = "darkgrey", "dPCR" = "#007191", "Normal" = "#d31f11", "Log-Normal" = "#f47a00")
+
+cats <- factor(c("Binomial", "dPCR", "Normal", "Log-Normal"), levels = c("Binomial", "dPCR", "Normal", "Log-Normal"), ordered = TRUE)
+
+df <- data.frame(
+  x = 1:8, y = rep(1, 8), ymin = rep(0, 8), ymax = rep(2, 8),
+  model = rep(cats, each = 2)
+)
+
+legendplot <- ggplot(df) + 
+  geom_ribbon(aes(x = x, ymin = ymin, ymax = ymax, group = model, fill = model), alpha = 0.3) +
+  geom_line(aes(x = x, y = y, group = model, color = model)) +
+  scale_color_manual(values = model_color_palette) +
+  scale_fill_manual(values = model_color_palette) +
+  theme(legend.position = "top", legend.title = element_blank())
+
+legend1 <- cowplot::get_plot_component(legendplot, pattern = "guide-box-top")
+```
+
+Main comparison of noise models
+```{r}
+full_data_index <- data.frame(date = as.Date(sapply(data_PCR_select, function(x) as.character(max(x$date))))) |>
+  mutate(i = 1:n()) |> 
+  group_by(season = lubridate::year(date+30)) |>
+  slice_max(date)
+```
+
+```{r fig.width = 18, fig.height = 12}
+color_values <- c("#007191","#d31f11","#f47a00")
+
+for (i in 0:(length(job_EpiSewer_result)/5-1)) {
+  res_list <- job_EpiSewer_result[c(5,3,1,2)+i*5]
+  names(res_list) <- c("Binomial likelihood","1) dPCR likelihood", "2) Normal likelihood", "3) Log-Normal likelihood")
+  
+  PCR_data_plot <- data_PCR_select[[i+1]]
+  PCR_data_plot_full <- data_PCR_select[[full_data_index |> filter(season == lubridate::year(max(PCR_data_plot$date)+30)) |> pull(i)]]
+  
+  first_estim_date <- res_list[[1]]$job$selection$date_select[[1]]["from"] + 14
+  last_estim_date <- max(PCR_data_plot$date, na.rm = T)
+
+  
+  if (res_list[[1]]$job$selection$wwtp == "ARA Werdhoelzli") {
+    if (lubridate::year(first_estim_date) == "2022") {
+      conc_lim <- 510
+      load_lim <- 5e13
+      R_lim <- c(0.6, 2)
+    } else if (lubridate::year(first_estim_date) == "2023") {
+      conc_lim <- 300
+      load_lim <- 3e13
+      R_lim <- c(0.7, 1.4)
+    } else if (lubridate::year(first_estim_date) == "2024") {
+      conc_lim <- 300
+      load_lim <- 3e13
+      R_lim <- c(0.7, 1.4)
+    }
+  } else if (res_list[[1]]$job$selection$wwtp == "STEP Aire") {
+    if (lubridate::year(first_estim_date) == "2022") {
+      conc_lim <- 300
+      load_lim <- 3e13
+      R_lim <- c(0, 3.5)
+    } else if (lubridate::year(first_estim_date) == "2023") {
+      stop("stop")
+    } else if (lubridate::year(first_estim_date) == "2024") {
+      conc_lim <- 250
+      load_lim <- 3e13
+      R_lim <- c(0.6, 1.8)
+    }
+  } else {
+    stop("Unknown wwtp")
+  }
+
+  
+  conc_plot <- conc_plot_f(res_list, PCR_data_plot, PCR_data_plot_full, first_estim_date, last_estim_date, color_values, conc_lim = conc_lim)
+  load_plot <- load_plot_f(res_list, PCR_data_plot, first_estim_date, last_estim_date, color_values, load_lim = load_lim)
+  inf_plot <- inf_plot_f(res_list, PCR_data_plot, first_estim_date, last_estim_date, color_values)
+  R_plot <- R_plot_f(res_list, PCR_data_plot, first_estim_date, last_estim_date, color_values, R_lim)
+  
+  content_plot <- cowplot::plot_grid(
+    plotlist = cowplot::align_plots(conc_plot, load_plot, R_plot, align = 'v', axis = 'l'), ncol = 1, labels = "AUTO"
+    )
+  
+  full_plot <- cowplot::plot_grid(
+    cowplot::plot_grid(
+      NULL, legend1, nrow = 1, rel_widths = c(0.05,0.95)
+      ),
+    content_plot,
+    ncol = 1, rel_heights = c(0.05, 1)
+  )
+  print(full_plot)
+  
+  file_id <- stringr::str_replace_all(paste(
+    res_list[[1]]$job$selection$wwtp, res_list[[1]]$job$selection$target, res_list[[1]]$job$selection$date_select[[1]]["to"], collapse = "_"
+    ), "[^[:alnum:]]", "_")
+  ggsave(full_plot, filename = here::here("figures", "dPCR paper",paste0("wastewater_noise_model_comparison_", file_id, ".pdf")), width = 10, height = 8)
+}
+```
+
+## Evaluation
+
+### Interval coverage
+```{r}
+i <- 0
+res_list <- job_EpiSewer_result[c(1:3)+i*5]
+names(res_list) <- c("1) Normal likelihood", "2) Log-Normal likelihood", "3) dPCR likelihood")
+
+conc_pred <- bind_rows(lapply(1:3, function(sub_i) {
+res_list[[sub_i]]$summary$concentration[type == "estimate", ] |> 
+  mutate(model = names(res_list)[sub_i], .before = 1)
+}))
+
+conc_true <- data_PCR_select[[full_data_index |> filter(season == lubridate::year(max(conc_pred$date)+30)) |> pull(i)]][date %in% conc_pred$date,]
+
+# join conc true and conc pred
+conc_score <- merge(conc_pred, conc_true, by = "date") |> 
+  mutate(
+    coverage_0.5 = ifelse(gc_per_mlww >= lower_0.5 & gc_per_mlww <= upper_0.5, 1, 0),
+    coverage_0.8 = ifelse(gc_per_mlww >= lower_0.8 & gc_per_mlww <= upper_0.8, 1, 0),
+    coverage_0.95 = ifelse(gc_per_mlww >= lower_0.95 & gc_per_mlww <= upper_0.95, 1, 0)
+    ) |> group_by(model)
+
+# all
+conc_score |> 
+  summarise(across(starts_with("coverage_"), function(x) mean(x, na.rm = T)))
+
+# low concentrations (October 2022)
+conc_score |> 
+  filter(date >= as.Date("2022-10-01"), date < as.Date("2022-11-01")) |> 
+  summarise(across(starts_with("coverage_"), function(x) mean(x, na.rm = T)))
+
+# high concentrations (Dec 2022)
+conc_score |> 
+  #filter(mean > 100) |> 
+  filter(date >= as.Date("2022-12-01"), date < as.Date("2023-01-01")) |> 
+  summarise(across(starts_with("coverage_"), function(x) mean(x, na.rm = T)))
+
+```
+
+### Difference between binomial and other models
+```{r}
+i <- 0
+
+binomial_model <- job_EpiSewer_result[[5 + i * 5]]
+other_models <- job_EpiSewer_result[1:3 + i * 5]
+
+print(binomial_model$job$selection$date_select)
+
+
+biomial_load <- binomial_model$summary$expected_load[,c("date", "median")]
+lapply(other_models, function(model) {
+  model$summary$expected_load |> 
+    left_join(biomial_load, by = "date", suffix = c("", "_binomial")) |> 
+    mutate(
+      diff_load = median - median_binomial,
+      relative_diff_load = diff_load/median_binomial
+    ) |> 
+    select(date, diff_load, relative_diff_load) |> 
+    mutate(model = model$job$selection$module_measurements)
+}) |> bind_rows() |> 
+  group_by(model) |> 
+  summarize(
+    MAE = mean(abs(diff_load), na.rm = TRUE),
+    MAPE = round(mean(abs(relative_diff_load), na.rm = T) * 100,2)
+    ) |> 
+  mutate(MAE_e13 = MAE/1e13)
+
+biomial_Rt <- binomial_model$summary$R[,c("date", "median")]
+lapply(other_models, function(model) {
+  model$summary$R |> 
+    left_join(biomial_Rt, by = "date", suffix = c("", "_binomial")) |> 
+    mutate(
+      diff_Rt = median - median_binomial,
+      relative_diff_Rt = diff_Rt/median_binomial
+    ) |> 
+    select(date, diff_Rt, relative_diff_Rt) |> 
+    mutate(model = model$job$selection$module_measurements)
+}) |> bind_rows() |> 
+  group_by(model) |> 
+  summarize(
+    MAE = mean(abs(diff_Rt), na.rm = TRUE),
+    MAPE = round(mean(abs(relative_diff_Rt), na.rm = TRUE)*100,2)
+    )
+```
+
+## Estimated parameters
+
+Prior-posterior plot
+
+```{r fig.width = 10, fig.height = 5}
+i <- 0
+sub_i <- 3 + i * 5
+
+plot_prePCR_cv <- plot_prior_posterior(job_EpiSewer_result[[sub_i]], "nu_upsilon_a") + coord_cartesian(xlim = c(0,2)) + 
+  theme(
+  #axis.title.y = element_blank()
+) + 
+  ylab("") +
+  xlab(expression(nu[pre])) +
+  scale_y_continuous(expand = expansion(mult = c(-0.01,0.05)), labels = scales::label_scientific()) +
+  scale_x_continuous(breaks = seq(0, 1.5,by = 0.5))
+
+plot_total_partitions <- plot_prior_posterior(job_EpiSewer_result[[sub_i]], "dPCR_maximum_partitions") + geom_vline(xintercept = 30000, color = "red") +
+  xlab(expression(m[max]))  +
+  scale_y_continuous(expand = expansion(mult = c(-0.01,0.05)),labels = scales::label_scientific()) +
+  scale_x_continuous(breaks = seq(0,50000,by = 15000))
+
+plot_partitions_loss_mu <- plot_prior_posterior(job_EpiSewer_result[[sub_i]], "dPCR_partition_loss_mean") + geom_vline(xintercept = 0.151, color = "red") +
+  xlab(expression(mu[delta])) +
+  scale_y_continuous(expand = expansion(mult = c(-0.01,0.05)),labels = scales::label_scientific()) +
+  scale_x_continuous(breaks = seq(0, 0.4, 0.1), labels = scales::percent)
+
+plot_conversion_factor <- plot_prior_posterior(job_EpiSewer_result[[sub_i]], "nu_upsilon_c") + geom_vline(xintercept = 1.73e-5, color = "red") + 
+    theme(
+  axis.title.y = element_blank()
+) +
+  xlab(expression(kappa)) +
+  scale_y_continuous(expand = expansion(mult = c(-0.01,0.05)), labels = scales::label_scientific()) +
+  scale_x_continuous(breaks = seq(0,1e-4,by = 5e-5))
+
+cowplot::plot_grid(plot_total_partitions, plot_partitions_loss_mu, plot_conversion_factor, plot_prePCR_cv, nrow = 1, labels = "AUTO")
+
+ggsave(filename = here::here("figures", "dPCR paper", "noise_model_parameters.pdf"), width = 10, height = 3)
+```
+
+Interpretation of conversion factor
+```{r}
+i <- 0
+sub_i <- 3 + i * 5
+
+nu_upsilon_a <- job_EpiSewer_result[[sub_i]]$fitted$summary("nu_upsilon_a")
+nu_upsilon_b <- median(job_EpiSewer_result[[sub_i]]$fitted$draws("max_partitions")) * 1e4 * (1-median(plogis(job_EpiSewer_result[[sub_i]]$fitted$draws("partition_loss_mu"))) * job_EpiSewer_result[[sub_i]]$job$data$partition_loss_max)
+nu_upsilon_c <- median(job_EpiSewer_result[[sub_i]]$fitted$draws("nu_upsilon_c")) * 1e-5
+
+source(here::here("code", "utils_dPCR_statistics.R"))
+source(here::here("code", "utils_dists.R"))
+
+print(nu_upsilon_a)
+est_cv_pre_lnorm(lambda = 100, m_partitions = nu_upsilon_b, c = nu_upsilon_c, cv = nu_upsilon_a$median, n_replicates = 1)
+est_cv_pre_taylor(lambda = 100, m_partitions = nu_upsilon_b, c = nu_upsilon_c, cv = 0, n_replicates = 1)
+```
+
+## Pruning
+
+```{r}
+tar_prune()
+prune_results(remove_all_outputs = TRUE, remove_all_jobfiles = TRUE)
+```
+

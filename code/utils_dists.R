@@ -423,6 +423,14 @@ expL_int <- function(theta, mu, sigma2) {
   return(integrate(int_f, lower = 0, upper = Inf)$value)
 }
 
+## Negative binomial ----
+rnbinom2 <- function(n = 1, mean, sd) {
+  if (mean <= 0 || sd <= 0) stop("Mean and SD must be positive.")
+  size <- (mean^2) / (sd^2 - mean)
+  prob <- size / (size + mean)
+  rnbinom(n, size = size, prob = prob)
+}
+
 ## Helper functions ----
 check_dist <- function(dist, name = "probability distribution") {
   if (!is.numeric(dist)) {
