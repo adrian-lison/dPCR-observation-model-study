@@ -4,14 +4,18 @@ title: "Continuous likelihoods for dPCR measurements"
 
 ```{r}
 here::i_am("notebooks/dPCR paper/likelihoods_continuous.Rmd")
+source(here::here("code", "utils_dPCR_statistics.R"))
+source(here::here("code", "utils_dists.R"))
+library(tidyr)
+library(dplyr)
 ```
 
 # Comparison of continuous distributions to approximate concentration estimates from ddPCR
 
 ## Simulation of measurements with probability of non-detection
 ```{r}
-with_nondetect <- function(nonzeros, lambda, n, c, cv, n_replicates = 1) {
-  p_nondetect <- est_nondetection_prob_pre(lambda = lambda, n = n, c = c, n_replicates = n_replicates, noise_dist = "gamma", cv = example_cv)
+with_nondetect <- function(nonzeros, lambda, m_partitions, c, cv, n_replicates = 1) {
+  p_nondetect <- est_nondetection_prob_pre(lambda = lambda, m_partitions = m_partitions, c = c, n_replicates = n_replicates, noise_dist = "gamma", cv = example_cv)
   detection <- extraDistr::rbern(length(nonzeros), prob = 1-p_nondetect)
   concentrations <- detection * nonzeros
   return(concentrations)
@@ -20,8 +24,8 @@ with_nondetect <- function(nonzeros, lambda, n, c, cv, n_replicates = 1) {
 
 ```{r}
 n_samples <- 100000 # number of samples to draw in simulation
-n = 25000 # number of droplets
-c = 0.519e-6 * 30 # droplet volume
+m_partitions <- 25000 # number of droplets
+c <-0.519e-6 * 30 # droplet volume
 do_with_nondetect <- TRUE
 n_replicates <- 1
 example_cv <- 0.5
@@ -31,10 +35,10 @@ example_cv <- 0.5
 set.seed(0)
 
 dists <- lapply(c(1, 5, 20), function(lambda) {
-  sim_conc_est <- sim_conc_pre(lambda = lambda, n = n, c = c, n_replicates = n_replicates, n_samples = n_samples, cv = example_cv, distribution = "gamma")
-  conc_cv_est <- est_cv_pre_gamma(lambda = lambda, n = n, c = c, n_replicates = n_replicates, cv = example_cv)
+  sim_conc_est <- sim_conc_pre(lambda = lambda, m_partitions = m_partitions, c = c, n_replicates = n_replicates, n_samples = n_samples, cv = example_cv, distribution = "gamma")
+  conc_cv_est <- est_cv_pre_gamma(lambda = lambda, m_partitions = m_partitions, c = c, n_replicates = n_replicates, cv = example_cv)
   
-  p_nondetect <- est_nondetection_prob_pre(lambda = lambda, n = n, c = c, n_replicates = n_replicates, noise_dist = "gamma", cv = example_cv)
+  p_nondetect <- est_nondetection_prob_pre(lambda = lambda, m_partitions = m_partitions, c = c, n_replicates = n_replicates, noise_dist = "gamma", cv = example_cv)
   
   conditional_mean <- lambda / (1-p_nondetect)
   conditional_cv <- sqrt(conc_cv_est^2*(1-p_nondetect) - p_nondetect)
@@ -48,7 +52,7 @@ dists <- lapply(c(1, 5, 20), function(lambda) {
   )
   
   if (do_with_nondetect) {
-    parametric_ests <- lapply(parametric_ests, with_nondetect, lambda = lambda, n = n, c = c, cv = cv, n_replicates = n_replicates)
+    parametric_ests <- lapply(parametric_ests, with_nondetect, lambda = lambda, m_partitions = m_partitions, c = c, cv = cv, n_replicates = n_replicates)
   }
   
   dat_dists <- tibble(
