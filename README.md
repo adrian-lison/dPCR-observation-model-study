@@ -74,7 +74,8 @@ coefficient of variation and the probability of non-detection, run the notebook
 
 To reproduce the simulation-based validation of linear regression using the
 dPCR-specific likelihood, run the notebook
-[concentration-regression.Rmd](notebooks/dPCR%20paper/concentration_regression.Rmd).
+[concentration_regression.Rmd](notebooks/dPCR%20paper/concentration_regression.Rmd). The notebooks
+[concentration_regression_range.Rmd](notebooks/dPCR%20paper/concentration_regression_range.Rmd) and [concentration_regression_extreme.Rmd](notebooks/dPCR%20paper/concentration_regression_extreme.Rmd) provide sensitivity analyses for inference at large concentrations.
 
 ### Real-world validation
 To reproduce the comparison with empirical data, run the notebook 
