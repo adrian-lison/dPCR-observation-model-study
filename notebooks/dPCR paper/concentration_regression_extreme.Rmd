@@ -1,0 +1,336 @@
+---
+title: "Regression analysis of measured extreme concentrations (assay saturation)"
+---
+
+Imports
+```{r}
+library(dplyr)
+library(tidyr)
+library(data.table)
+library(dPCRfit)
+library(ggplot2)
+library(ggdist)
+```
+
+```{r}
+here::i_am("notebooks/dPCR paper/concentration_regression.Rmd")
+```
+
+```{r}
+source(here::here("code","utils_dists.R"))
+source(here::here("code","utils_dPCR_statistics.R"))
+```
+
+## Setup
+
+```{r}
+rerun_models <- TRUE
+```
+
+```{r}
+n_replicates <- 2 # number of technical replicates
+n_measured <- 1 # number of biological replicates
+model_types <- list("Normal", "Log-Normal", "dPCR", "dPCR_binomial") # different models to compare
+```
+
+## Simulation
+
+```{r}
+set.seed(123)
+
+model_spec <- list(
+    link_type = 1 # 0 = identity, 1 = log-link
+)
+x = seq(-5,5,length.out=10)
+
+sim_data <- mapply(function(alpha_true) {
+  alpha_true <- log(alpha_true)
+  beta_true = 0.2
+  cv_true <- 0.1 #extraDistr::rtnorm(1, 0, 0.5, a = 0)
+  
+  # Simulate concentrations
+  true_concentration = exp(alpha_true + beta_true * x)
+  conc_data = bind_rows(mapply(function (lambda, x_i) {
+    sim_conc <- sim_conc_pre(
+      lambda = lambda,
+      m_partitions = sim_partitions(
+        n_measured, n_replicates,
+        max_partitions = 30000,
+        partition_loss_logit_mean = -2,
+        partition_loss_logit_sd = 0.4,
+        partition_loss_max = 0.5
+        ),
+      c = 1.73e-5,
+      cv = cv_true,
+      n_replicates = n_replicates,
+      distribution = "lnorm",
+      n_samples = n_measured,
+      get_partitions = T
+    )
+    sim_conc$x <- x_i
+    sim_conc$date <- as.Date("1999-01-01") + x_i*10
+    sim_conc$lambda <- lambda
+    sim_conc$n_replicates <- n_replicates
+    return(sim_conc)
+    },
+    lambda = true_concentration, x_i = x, SIMPLIFY = FALSE))
+  return(list(
+    alpha_true = alpha_true,
+    beta_true = beta_true,
+    cv_true = cv_true,
+    true_concentration = true_concentration,
+    conc_data = conc_data
+))
+},
+alpha_true = 1e+05*seq(4,7,0.1),
+SIMPLIFY = FALSE)
+```
+
+```{r}
+sim_data[[length(sim_data)-1]]$conc_data |> filter(!is.infinite(concentration))
+sim_data[[length(sim_data)]]$conc_data |> filter(!is.infinite(concentration))
+```
+
+
+```{r}
+lapply(sim_data, function(dat) {
+  ggplot(dat$conc_data, aes(x=x, y=concentration)) +
+  geom_point() +
+  theme_bw() +
+  ggtitle(round(exp(dat$alpha_true),2))
+})
+```
+
+## Bayesian regression model
+
+```{r}
+fit_opts <- set_fit_opts(
+  sampler = sampler_stan_mcmc(
+    seed = 0, chains = 4, parallel_chains = 4, iter_warmup = 1000, iter_sampling = 1000
+    )
+  )
+```
+
+Fit all models
+```{r}
+ if (rerun_models) {
+all_fits_all_data <- lapply(sim_data, function(dat) {
+    all_fits <- mapply(function(model_type) {
+      
+      reg_formula <- concentration ~ x
+      reg_link <- "log"
+      
+      if (model_type %in% c("Normal")) {
+        fit <- dPCRfit(
+          formula = reg_formula,
+          data = dat$conc_data |>  filter(!is.infinite(concentration)),
+          link = reg_link,
+          prior_intercept = c(0, 10),
+          prior_coefficients = c(0, 1),
+          measurements = concentration_measurements(
+            id_col = "date",
+            concentration_col = "concentration",
+            n_averaged_col = "n_replicates",
+            distribution = "normal"
+          ),
+          noise = noise_constant_var(
+            cv_prior_mu = 0, cv_prior_sigma = 0.5, warn = FALSE
+          ),
+          nondetect = nondetect_none(),
+          fit_opts = fit_opts
+        )
+      } else if (model_type == "Log-Normal") {
+        fit <- dPCRfit(
+          formula = reg_formula,
+          data = dat$conc_data |>  filter(!is.infinite(concentration)),
+          link = reg_link,
+          prior_intercept = c(0, 10),
+          prior_coefficients = c(0, 0.5),
+          measurements = concentration_measurements(
+            id_col = "date",
+            concentration_col = "concentration",
+            n_averaged_col = "n_replicates",
+            distribution = "lognormal"
+          ),
+          noise = noise_constant_cv(
+            cv_prior_mu = 0, cv_prior_sigma = 0.5
+          ),
+          nondetect = nondetect_none(),
+          fit_opts = fit_opts
+        )
+      } else if (model_type == "dPCR") {
+        fit <- dPCRfit(
+          formula = reg_formula,
+          data = dat$conc_data |>  filter(!is.infinite(concentration)),
+          link = reg_link,
+          prior_intercept = c(0, 10),
+          prior_coefficients = c(0, 0.5),
+          measurements = concentration_measurements(
+            id_col = "date",
+            concentration_col = "concentration",
+            n_averaged_col = "n_replicates",
+            distribution = "gamma"
+          ),
+          noise = noise_dPCR(
+            cv_prior_mu = 0, cv_prior_sigma = 0.5,
+            max_partitions_prior_lower = 10000,
+            max_partitions_prior_upper = 50000,
+            partition_loss_mean_prior_lower = 0.01,
+            partition_loss_mean_prior_upper = 0.3,
+            partition_loss_variation_prior_lower = 0.5,
+            partition_loss_variation_prior_upper = 2,
+            partition_loss_max = 0.5,
+            volume_scaled_prior_mu = 1e-5,
+            volume_scaled_prior_sigma = 5e-6,
+            prePCR_noise_type = "lognormal"
+          ),
+          nondetect = nondetect_dPCR(),
+          fit_opts = fit_opts
+        )
+      } else if (model_type == "dPCR_binomial") {
+        fit <- dPCRfit(
+          formula = positive_partitions ~ x,
+          data = dat$conc_data |> 
+            filter(positive_partitions < total_partitions) |> 
+            mutate(concentration = ifelse(is.infinite(concentration), NA, concentration)),
+          link = reg_link,
+          prior_intercept = c(0, 10),
+          prior_coefficients = c(0, 0.5),
+          measurements = positive_partitions(
+            id_col = "date",
+            positive_partitions_col = "positive_partitions",
+            total_partitions_col = "total_partitions",
+            n_averaged_col = "n_replicates"
+          ),
+          noise = noise_dPCR(
+            cv_prior_mu = 0, cv_prior_sigma = 0.5,
+            partitions_observe = TRUE,
+            volume_scaled_prior_mu = 1.73e-5,
+            volume_scaled_prior_sigma = 0,
+            prePCR_noise_type = "lognormal"
+          ),
+          nondetect = nondetect_dPCR(),
+          fit_opts = fit_opts
+        )
+      }
+      return(list(fit = fit, model_type = model_type))
+    },
+    model_type = model_types,
+    SIMPLIFY = FALSE
+    )
+    return(all_fits)
+  })
+}
+```
+
+
+## Results
+
+```{r}
+if (rerun_models) {
+  res_beta_all <- rbindlist(mapply(function(fits, dat) {
+    beta_res <- rbindlist(lapply(fits, function(res) res$fit$coef_summary[variable == "x",]))
+    beta_res[, true := dat$beta_true]
+    beta_res[, alpha := dat$alpha_true]
+    beta_res[, model := purrr::list_c(model_types)]
+  }, fits = all_fits_all_data, dat = sim_data, SIMPLIFY = FALSE))
+  saveRDS(res_beta_all, here::here("data", "results", "regression_extreme_simulated_beta.rds"))
+} else {
+  res_beta_all <- readRDS(here::here("data", "results", "regression_extreme_simulated_beta.rds"))
+}
+```
+
+```{r}
+if (rerun_models) {
+  res_alpha_all <- rbindlist(mapply(function(fits, dat) {
+    alpha_res <- rbindlist(lapply(fits, function(res) res$fit$coef_summary[variable == "(Intercept)",]))
+    alpha_res[, true := dat$alpha_true]
+    alpha_res[, model := purrr::list_c(model_types)]
+  }, fits = all_fits_all_data, dat = sim_data, SIMPLIFY = FALSE))
+  saveRDS(res_alpha_all, here::here("data", "results", "regression_extreme_simulated_alpha.rds"))
+} else {
+  res_alpha_all <- readRDS(here::here("data", "results", "regression_extreme_simulated_alpha.rds"))
+}
+```
+
+
+```{r}
+beta_coverage <- res_beta_all |>
+  group_by(model) |> 
+  summarize(coverage = round(sum(true <= upper_95 & true >= lower_95)/n(), 2)) |> 
+  mutate(model_facet = factor(
+    model,
+    levels = c("dPCR_binomial", "dPCR", "Normal", "Log-Normal"),
+    labels = (c("(A) Binomial", "(B) dPCR", "(C) Normal", "(D) Log-Normal")),
+    ordered = T)
+    ) |> mutate(
+      text = paste0("Coverage: ", coverage*100, "%")
+    )
+```
+
+```{r}
+res_beta_all |> 
+  mutate(model_facet = factor(
+    model,
+    levels = c("dPCR_binomial", "dPCR", "Normal", "Log-Normal"),
+    labels = (c("(A) Binomial", "(B) dPCR", "(C) Normal", "(D) Log-Normal")),
+    ordered = T)
+    ) |>
+  mutate(model = factor(
+    model,
+    levels = c("dPCR_binomial", "dPCR", "Normal", "Log-Normal"),
+    labels = (c("Binomial", "dPCR", "Normal", "Log-Normal")),
+    ordered = T)
+    ) |>
+  ggplot(aes(x=ftrans(alpha))) +
+  ggdist::geom_pointinterval(aes(y=mean, ymin=lower_95, ymax=upper_95, color = model)) +
+  geom_hline(yintercept = res_beta_all$true[1], linetype = "dashed") +
+  facet_wrap(~model_facet, ) +
+  scale_x_continuous(labels = scales::label_percent(accuracy = 0.01), breaks = seq(0.9991, 1, by = 0.0003)) +
+  xlab("Expected percentage of positive partitions") + ylab("Estimated coefficient") +
+  theme_bw() +
+  coord_cartesian(ylim = c(0, 0.5)) +
+  scale_color_manual(values = (c("darkgrey","#007191","#d31f11","#f47a00"))) +
+  theme(
+    legend.position = "top",
+    legend.title = element_blank(),
+    strip.background = element_rect(fill = "#f2f2f2")
+  )
+
+ggsave(here::here("figures", "dPCR paper", "regression_extreme_validation_beta.pdf"), width = 10, height = 6)
+```
+```{r}
+ftrans <- function(x) 1-exp(-exp(x)*1.73e-5)
+
+res_alpha_all |> 
+  filter(mean > 2) |> 
+  mutate(model_facet = factor(
+    model,
+    levels = c("dPCR_binomial", "dPCR", "Normal", "Log-Normal"),
+    labels = (c("(A) Binomial", "(B) dPCR", "(C) Normal", "(D) Log-Normal")),
+    ordered = T)
+    ) |>
+  mutate(model = factor(
+    model,
+    levels = c("dPCR_binomial", "dPCR", "Normal", "Log-Normal"),
+    labels = (c("Binomial", "dPCR", "Normal", "Log-Normal")),
+    ordered = T)
+    ) |>
+  ggplot(aes(x=ftrans(true))) +
+  ggdist::geom_pointinterval(aes(y=exp(mean), ymin=exp(lower_95), ymax=exp(upper_95), color = model)) +
+  geom_line(data = data.frame(x = ftrans(log(seq(1e+05*4, 1e+05*8, length.out=100))), y = seq(1e+05*4, 1e+05*8, length.out=100)), aes(x=x,y=y), linetype = "dashed") +
+  facet_wrap(~model_facet, ) +
+  xlab("Expected percentage of positive partitions") + ylab("Estimated mean concentration") +
+  theme_bw() +
+    scale_x_continuous(labels = scales::label_percent(accuracy = 0.01), breaks = seq(0.9991, 1, by = 0.0003)) +
+  coord_cartesian(ylim = c(0, 1e6)) +
+  scale_color_manual(values = (c("darkgrey","#007191","#d31f11","#f47a00"))) +
+  theme(
+    legend.position = "top",
+    legend.title = element_blank(),
+    strip.background = element_rect(fill = "#f2f2f2")
+  )
+
+ggsave(here::here("figures", "dPCR paper", "regression_extreme_validation_alpha.pdf"), width = 10, height = 6)
+```
+
