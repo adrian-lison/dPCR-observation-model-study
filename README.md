@@ -1,4 +1,4 @@
-# Improving inference in environmental surveillance by modelling the statistical features of digital PCR
+# Improving inference from reported concentrations in environmental surveillance by modelling the statistical features of digital PCR
 
 Adrian Lison (1,2), Timothy R. Julian (3, 4, 5), and Tanja Stadler (1,2)
 
