@@ -1,0 +1,426 @@
+---
+title: "Comparison of posteriors via numerical integration"
+---
+
+## Setup
+```{r}
+here::i_am("notebooks/dPCR paper/numerical_posterior.Rmd")
+```
+
+```{r}
+source(here::here("code/utils_dPCR_statistics.R"))
+source(here::here("code/utils_dists.R"))
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+library(data.table)
+```
+
+```{r}
+log_likelihood_binomial <- function(conc_obs, lambda, m_partitions, c, conc_tab = NULL) {
+  if(is.null(conc_tab)) conc_tab <- table(conc_obs)
+  conc_vals <- as.numeric(names(conc_tab))
+  counts <- conc_tab
+
+  pos_drops <- m_partitions * (1 - exp(-conc_vals * c))
+  
+  log_pmass <- dbinom(
+    x = pos_drops,
+    size = m_partitions,
+    prob = 1 - exp(-lambda * c),
+    log = TRUE
+  )
+  
+  sum(log_pmass * counts)
+}
+```
+
+```{r}
+log_likelihood_dPCR_gamma <- function(conc_obs, lambda, m_partitions, c, conc_tab = NULL) {
+  if(is.null(conc_tab)) conc_tab <- table(conc_obs)
+  conc_vals <- as.numeric(names(conc_tab))
+  counts <- conc_tab
+  
+  p_nondetect <- est_nondetection_prob_pre(lambda = lambda, m_partitions = m_partitions, c = c, n_replicates = 1, cv = 0)
+  conc_cv_est <- est_cv_pre_gamma(lambda = lambda, m_partitions = m_partitions, c = c, n_replicates = 1, cv = 0)
+  conditional_mean <- lambda / (1-p_nondetect)
+  conditional_cv <- sqrt(conc_cv_est^2*(1-p_nondetect) - p_nondetect)
+  
+  nonzero_pdf_log <- dgamma2(x = conc_vals, mean = conditional_mean, cv = conditional_cv, log = TRUE)
+  pdf_log <- ifelse(conc_vals == 0, log(p_nondetect), log(1-p_nondetect) + nonzero_pdf_log)
+  
+  return(sum(pdf_log * counts))
+}
+```
+
+### Grid-based numerical integration
+```{r}
+posterior_lambda_grid <- function(
+  lambda_grid,
+  conc_obs,
+  m_partitions,
+  c,
+  lambda_prior_lower,
+  lambda_prior_upper,
+  likelihood_type,
+  conc_tab = NULL
+) {
+
+  if (is.null(conc_tab)) {
+    conc_tab <- table(conc_obs)
+  }
+  
+  # log likelihood for each lambda
+  if (likelihood_type == "binomial") {
+    log_lik <- sapply(lambda_grid, function(lambda) {
+    log_likelihood_binomial(
+      conc_obs = NULL,
+      lambda = lambda,
+      m_partitions = m_partitions,
+      c = c,
+      conc_tab = conc_tab
+    )
+  })
+  } else if (likelihood_type == "dPCR_gamma") {
+    log_lik <- sapply(lambda_grid, function(lambda) {
+      log_likelihood_dPCR_gamma(
+        conc_obs = NULL,
+        lambda = lambda,
+        m_partitions = m_partitions,
+        c = c,
+        conc_tab = conc_tab
+      )
+    })
+  } else {
+    stop("Invalid likelihood type")
+  }
+  
+
+  # log prior on grid
+  log_prior <- dunif(
+    lambda_grid,
+    min = lambda_prior_lower,
+    max = lambda_prior_upper,
+    log = TRUE
+  )
+  
+  # unnormalized log posterior
+  log_post_unnorm <- log_lik + log_prior
+
+  # normalize using log-sum-exp (R-style)
+  log_norm_const <- {
+    m <- max(log_post_unnorm)
+    m + log(sum(exp(log_post_unnorm - m)))
+  }
+
+  tibble(
+    lambda = lambda_grid,
+    log_posterior = log_post_unnorm - log_norm_const
+  )
+}
+
+posterior_mean_grid <- function(post_df) {
+  sum(post_df$lambda * exp(post_df$log_posterior)) /
+    sum(exp(post_df$log_posterior))
+}
+
+posterior_sd_grid <- function(post_df, posterior_mean) {
+  sqrt(
+    sum((post_df$lambda - posterior_mean)^2 * exp(post_df$log_posterior)) /
+      sum(exp(post_df$log_posterior))
+  )
+}
+
+posterior_quantile_grid <- function(post_df, quantile) {
+  cum_probs <- cumsum(exp(post_df$log_posterior))
+  cum_probs <- cum_probs / max(cum_probs)
+  lambda_quantile <- suppressWarnings(approx(
+    x = cum_probs,
+    y = post_df$lambda,
+    xout = quantile
+  )$y)
+  return(lambda_quantile)
+}
+```
+
+```{r}
+sim_concs_counts_binomial <- function(n_samples, lambda, m_partitions, c) {
+  pos_drops <- seq(0, m_partitions)
+  conc <- - log(1 - (pos_drops / m_partitions)) * (1/c)
+  pmass <- dbinom(
+    x = pos_drops,
+    size = m_partitions,
+    prob = 1 - exp(-lambda * c)
+    )
+  if (n_samples>1e9) {
+    tab <- pmass * n_samples
+  } else {
+    tab <- rmultinom(1, n_samples, pmass)[,1]
+  }
+  names(tab) <- conc
+  tab <- tab[tab>0]
+  return(tab)
+}
+```
+
+## Simulation
+```{r}
+m_partitions <- 25000
+c <- 0.519e-3/30
+```
+
+```{r}
+lambda_prior_lower <- 0
+lambda_prior_upper <- 10000
+```
+
+```{r}
+est_nondetection_prob_pre(lambda = -log(0.05)/(c*m_partitions), m_partitions = m_partitions, c = c, n_replicates = 1, cv = 0)
+```
+
+```{r}
+est_cv_pre_gamma(lambda = 25.69614, m_partitions = m_partitions, c = c, n_replicates = 1, cv = 0)
+```
+
+### Single concentration
+```{r}
+lambda_true <- 10
+```
+
+```{r}
+conc_tab <- sim_concs_counts_binomial(n_samples = 10, lambda = lambda_true, m_partitions = m_partitions, c = c)
+
+lambda_grid <- seq(max(1e-4, lambda_true/4 - 1), 1 + lambda_true * 4, length.out = 5000)
+
+post_df_binomial <- posterior_lambda_grid(
+  lambda_grid = lambda_grid,
+  conc_tab = conc_tab,
+  m_partitions = m_partitions,
+  c = c,
+  lambda_prior_lower = lambda_prior_lower,
+  lambda_prior_upper = lambda_prior_upper,
+  likelihood_type = "binomial"
+)
+
+post_df_dPCR_gamma <- posterior_lambda_grid(
+  lambda_grid = lambda_grid,
+  conc_tab = conc_tab,
+  m_partitions = m_partitions,
+  c = c,
+  lambda_prior_lower = lambda_prior_lower,
+  lambda_prior_upper = lambda_prior_upper,
+  likelihood_type = "dPCR_gamma"
+)
+
+post_mean_binomial <- posterior_mean_grid(post_df_binomial)
+
+post_mean_gamma <- posterior_mean_grid(post_df_dPCR_gamma)
+post_mean_gamma_rel_error <- (post_mean_gamma - lambda_true)/lambda_true
+
+print(data.frame(
+  mean_binomial = post_mean_binomial,
+  mean_gamma = post_mean_gamma,
+  mean_gamma_rel_error = post_mean_gamma_rel_error,
+  mean_lnorm = post_mean_lnorm,
+  mean_lnorm_rel_error = post_mean_lnorm_rel_error
+))
+```
+
+```{r}
+ggplot(mapping = aes(x = lambda, y = exp(log_posterior))) +
+    geom_vline(xintercept = lambda_true, color = "red", linetype = "dashed") +
+  geom_line(data = post_df_binomial, color = "black") +
+  geom_line(data = post_df_dPCR_gamma, color = "#850c14") +
+  labs(
+    x = "Concentration [gc/mL]",
+    y = "Density"
+  ) +
+  coord_cartesian(xlim = c(0, 20)) +
+  theme_bw()
+```
+### Set of concentrations
+```{r}
+post_dfs <- lapply(c(0.1, 1, 10, 100), function(lambda_true) {
+  conc_tab <- sim_concs_counts_binomial(n_samples = 10, lambda = lambda_true, m_partitions = m_partitions, c = c)
+  set.seed(1)
+  lambda_grid <- seq(max(1e-4, lambda_true/4 - 1), 1 + lambda_true * 4, length.out = 10000)
+  
+  post_df_binomial <- posterior_lambda_grid(
+    lambda_grid = lambda_grid,
+    conc_tab = conc_tab,
+    m_partitions = m_partitions,
+    c = c,
+    lambda_prior_lower = lambda_prior_lower,
+    lambda_prior_upper = lambda_prior_upper,
+    likelihood_type = "binomial"
+  ) |> mutate(lambda_true = lambda_true)
+  
+  post_df_dPCR_gamma <- posterior_lambda_grid(
+    lambda_grid = lambda_grid,
+    conc_tab = conc_tab,
+    m_partitions = m_partitions,
+    c = c,
+    lambda_prior_lower = lambda_prior_lower,
+    lambda_prior_upper = lambda_prior_upper,
+    likelihood_type = "dPCR_gamma"
+  ) |> mutate(lambda_true = lambda_true)
+  
+  return(list(post_df_binomial = post_df_binomial,
+              post_df_dPCR_gamma = post_df_dPCR_gamma))
+})
+```
+
+```{r fig.height = 10, fig.width = 5}
+post_dfs_binomial <- bind_rows(lapply(post_dfs, function(x) x$post_df_binomial |> filter(exp(log_posterior)>1e-8) |> mutate(model = "Binomial")))
+post_dfs_gamma <- bind_rows(lapply(post_dfs, function(x) x$post_df_dPCR_gamma |> filter(exp(log_posterior)>1e-8) |> mutate(model = "Continuous approximation")))
+post_dfs_all <- bind_rows(post_dfs_binomial, post_dfs_gamma)
+
+ggplot(mapping = aes(x = lambda, y = exp(log_posterior))) +
+    geom_vline(data = post_dfs_binomial |> distinct(lambda_true), aes(xintercept = lambda_true), color = "red", linetype = "dashed") +
+  geom_line(data = post_dfs_all, aes(color = model)) +
+  labs(
+    x = "Concentration [gc/mL]",
+    y = "Density"
+  ) +
+  scale_color_manual("Model", values = c("black", "#850c14")) +
+  theme_bw() +
+  theme(
+    legend.position = "top",
+    strip.background = element_rect(fill = "white"),
+  ) +
+  scale_x_continuous(expand = c(0,0)) +
+  facet_wrap(~lambda_true, ncol = 1, scales = "free")
+
+ggsave(here::here("figures", "dPCR paper", "gamma_approximation_posterior_example.pdf"), width = 10, height = 12)
+```
+
+### Range of concentrations
+```{r}
+lambda_true <- seq(0.1^(1/10), 105^(1/10), length.out = 50)^10
+set.seed(0)
+
+posterior_means <- rbindlist(lapply(lambda_true, function(lambda_true) {
+  conc_tab <- sim_concs_counts_binomial(n_samples = 1e15, lambda = lambda_true, m_partitions = m_partitions, c = c)
+
+  lambda_grid <- seq(max(1e-4, lambda_true/4 - 1), 1 + lambda_true * 4, length.out = 100000)
+  
+  post_df_binomial <- posterior_lambda_grid(
+    lambda_grid = lambda_grid,
+    conc_tab = conc_tab,
+    m_partitions = m_partitions,
+    c = c,
+    lambda_prior_lower = lambda_prior_lower,
+    lambda_prior_upper = lambda_prior_upper,
+    likelihood_type = "binomial"
+  )
+  post_mean_binomial <- posterior_mean_grid(post_df_binomial)
+  post_mean_binomial_error <- (post_mean_binomial - lambda_true)
+  post_mean_binomial_rel_error <- post_mean_binomial_error/lambda_true
+  remove(post_df_binomial)
+  
+  post_df_dPCR_gamma <- posterior_lambda_grid(
+    lambda_grid = lambda_grid,
+    conc_tab = conc_tab,
+    m_partitions = m_partitions,
+    c = c,
+    lambda_prior_lower = lambda_prior_lower,
+    lambda_prior_upper = lambda_prior_upper,
+    likelihood_type = "dPCR_gamma"
+  )
+  post_mean_gamma <- posterior_mean_grid(post_df_dPCR_gamma)
+  post_mean_gamma_error <- (post_mean_gamma - lambda_true)
+  post_mean_gamma_rel_error <- post_mean_gamma_error/lambda_true
+  remove(post_df_dPCR_gamma)
+  
+  return(data.table(
+    lambda = lambda_true,
+    binomial = post_mean_binomial,
+    binomial_error = post_mean_binomial_error,
+    binomial_rel_error = post_mean_binomial_rel_error,
+    dPCR_gamma = post_mean_gamma,
+    gamma_error = post_mean_gamma_error,
+    gamma_rel_error = post_mean_gamma_rel_error
+  ))
+}))
+```
+
+Plot relative bias over range
+```{r}
+c_LOD <- -log(0.05)/(c*m_partitions)
+c_LOQ <- 25.69614
+
+ggplot(posterior_means) +
+  geom_vline(xintercept = c_LOD, linetype = "dashed") + 
+  geom_vline(xintercept = c_LOQ, linetype = "dotted") + 
+  geom_point(aes(x=lambda, y=gamma_rel_error)) +
+  geom_line(aes(x=lambda, y=gamma_rel_error)) +
+  theme_bw() +
+  geom_text(
+    x = c_LOD,
+    y = -Inf,
+    label = "95% detection probability",
+    angle = 90,
+    vjust = 1.5,
+    hjust = -0.05,
+    inherit.aes = FALSE,
+    size = 3,
+    fontface = "plain",
+  ) +
+  geom_text(
+    x = c_LOQ,
+    y = -Inf,
+    label = "30% coefficient of variation",
+    angle = 90,
+    vjust = 1.5,
+    hjust = -0.05,
+    inherit.aes = FALSE,
+    size = 3,
+    fontface = "plain",
+  ) +
+  scale_y_continuous(labels = scales::percent) + 
+  scale_x_continuous("Concentration [gc/mL]", expand = expansion(add=c(1, 0))) +
+  ylab("Continuous approximation bias") +
+  coord_cartesian(xlim=c(0,102))
+
+ggsave(here::here("figures", "dPCR paper", "gamma_approximation_posterior_bias.pdf"), width = 10, height = 5)
+```
+
+Plot absolute bias over range
+```{r}
+c_LOD <- -log(0.05)/(c*m_partitions)
+c_LOQ <- 25.69614
+
+ggplot(posterior_means) +
+  geom_vline(xintercept = c_LOD, linetype = "dashed") + 
+  geom_vline(xintercept = c_LOQ, linetype = "dotted") + 
+  geom_point(aes(x=lambda, y=gamma_error)) +
+  geom_line(aes(x=lambda, y=gamma_error)) +
+  theme_bw() +
+  geom_text(
+    x = c_LOD,
+    y = -Inf,
+    label = "95% detection probability",
+    angle = 90,
+    vjust = 1.5,
+    hjust = -0.05,
+    inherit.aes = FALSE,
+    size = 3,
+    fontface = "plain",
+  ) +
+  geom_text(
+    x = c_LOQ,
+    y = -Inf,
+    label = "30% coefficient of variation",
+    angle = 90,
+    vjust = 1.5,
+    hjust = -0.05,
+    inherit.aes = FALSE,
+    size = 3,
+    fontface = "plain",
+  ) +
+  scale_x_continuous("Concentration [gc/mL]", expand = expansion(add=c(1, 0))) +
+  ylab("Continuous approximation bias") +
+  coord_cartesian(xlim=c(0,102))
+
+ggsave(here::here("figures", "dPCR paper", "gamma_approximation_posterior_bias_absolute.pdf"), width = 10, height = 5)
+```

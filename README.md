@@ -107,6 +107,17 @@ To reproduce the analysis of wastewater measurements with different noise models
   shows the effect of conditioning on non-zero measurements.
 - [partition_loss.Rmd](notebooks/dPCR%20paper/partition_loss.Rmd) shows the 
   modeling of partition loss.
+- [ML_estimate_bias.Rmd](notebooks/dPCR%20paper/ML_estimate_bias.Rmd) shows an 
+  analysis of the bias in the maximum likelihood estimator for finite partition
+  numbers.
+- [likelihood_gamma_accuracy.Rmd](notebooks/dPCR%20paper/likelihood_gamma_accuracy.Rmd)
+  assesses the accuracy of a gamma density approximation to the discrete 
+  distribution of concentration estimates arising from binomially distributed
+  positive partition counts.
+- [numerical_posterior.Rmd](notebooks/dPCR%20paper/numerical_posterior.Rmd) 
+  computes posterior distributions for the concentration under the approximate 
+  dPCR likelihood via numerical integration and assesses the accuracy of 
+  posterior estimates. 
 
 ### Useful scripts
 The script [utils_dPCR_statistics.R](code/utils_dPCR_statistics.R) contains

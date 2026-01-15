@@ -1,0 +1,210 @@
+---
+title: "Accuracy of continuous likelihood approximation"
+---
+
+## Setup
+```{r}
+here::i_am("notebooks/dPCR paper/likelihood_gamma_accuracy.Rmd")
+```
+
+```{r}
+source(here::here("code/utils_dPCR_statistics.R"))
+source(here::here("code/utils_dists.R"))
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+```
+
+```{r}
+get_binomial_probs <- function(lambda, m_partitions, c) {
+  pos_drops <- seq(0, m_partitions)
+  conc <- - log(1 - (pos_drops / m_partitions)) * (1/c)
+  conc_lower <- conc[-length(conc)]
+  conc_midpoints <- (conc_lower + conc[-1])/2
+  pmass <- dbinom(
+    x = pos_drops,
+    size = m_partitions,
+    prob = 1 - exp(-lambda * c)
+    )
+  return(data.frame(
+    pos_drops = pos_drops,
+    conc = conc,
+    bin_left = c(log(1 - (1 / m_partitions)) * (1/c) / 2, conc_midpoints),
+    bin_right = c(conc_midpoints, conc_midpoints[length(conc_midpoints)] + (-log(1 - (1 / m_partitions)) * (1/c)) / 2),
+    pmass = pmass,
+    pmass_cum = cumsum(pmass)
+  ))
+}
+```
+
+```{r}
+get_bin_probs_gamma <- function(lambda, m_partitions, c) {
+  
+  pos_drops <- seq(0, m_partitions)
+  conc <- -log(1 - (pos_drops / m_partitions)) * (1/c)
+  conc_lower <- conc[-length(conc)]
+  conc_midpoints <- (conc_lower + conc[-1])/2
+  
+  conc_cv_est <- est_cv_pre_gamma(lambda = lambda, m_partitions = m_partitions, c = c, n_replicates = 1, cv = 0)
+  p_nondetect <- est_nondetection_prob_pre(lambda = lambda, m_partitions = m_partitions, c = c, n_replicates = 1, noise_dist = "gamma", cv = 0)
+  
+  conditional_mean <- lambda / (1-p_nondetect)
+  conditional_cv <- sqrt(conc_cv_est^2*(1-p_nondetect) - p_nondetect)
+  
+  midpoint_cdf <- pgamma2(q = conc_midpoints, mean = conditional_mean, cv = conditional_cv)
+  zero_half_bin <- midpoint_cdf[1]
+  nonzero_bin_pdf <- diff(midpoint_cdf)
+  
+  pmass <- ifelse(conc == 0, p_nondetect + zero_half_bin, (1-p_nondetect) * c(NA, nonzero_bin_pdf))
+  
+  binom_pmass <- dbinom(
+    x = pos_drops,
+    size = m_partitions,
+    prob = 1 - exp(-lambda * c)
+    )
+  
+  return(data.frame(
+    pos_drops = pos_drops,
+    conc = conc,
+    bin_left = c(log(1 - (1 / m_partitions)) * (1/c) / 2, conc_midpoints),
+    bin_right = c(conc_midpoints, conc_midpoints[length(conc_midpoints)] + (-log(1 - (1 / m_partitions)) * (1/c)) / 2),
+    pmass = pmass,
+    pmass_cum = cumsum(pmass),
+    binom_pmass = binom_pmass,
+    binom_pmass_cum = cumsum(binom_pmass)
+  ))
+}
+```
+
+```{r}
+m_partitions <- 25000
+c <- 1.73e-05
+```
+
+Legend for histogram
+```{r}
+# Dummy data
+dummy_df <- data.frame(
+  category = rep(c("A", "B", "C"), each = 3),
+  status = rep(c("matching", "overpredicted", "underpredicted"), times = 3),
+  value = c(10, 4, 6,
+            7, 8, 5,
+            9, 3, 7)
+)
+
+# Plot
+dummy_plot <- ggplot(dummy_df, aes(x = category, y = value, fill = status, alpha = status)) +
+  geom_col(position = "stack") +
+  scale_fill_manual(
+    values = c(
+      matching = "#850c14",
+      overpredicted = "red",
+      underpredicted = "black"
+    )
+  ) +
+  scale_alpha_manual(
+    values = c(
+      matching = 1,
+      overpredicted = 0.5,
+      underpredicted = 0.8
+    )
+  ) +
+  theme_minimal() +
+  theme(
+    legend.position = "top",
+    legend.title = element_blank()
+  )
+
+hist_legend <- cowplot::get_legend(dummy_plot)
+```
+
+## Histograms
+Compute bin probabilities for a given concentration
+```{r}
+lambda_test <- 20
+
+bin_probs_gamma <- get_bin_probs_gamma(lambda = lambda_test, m_partitions = m_partitions, c = c)
+
+# plot as histogram/bars instead
+hist_plot <- bin_probs_gamma |> 
+  ggplot(aes(xmin = bin_left, xmax = bin_right, ymin = 0)) +
+  geom_rect(aes(ymax=binom_pmass), stat="identity", fill = "black", alpha = 0.8) +
+  geom_rect(aes(ymax=pmass), stat="identity", alpha = 0.5, fill = "red") +
+  coord_cartesian(xlim = c(0, lambda_test*2+20)) +
+  theme_bw() +
+  theme(legend.position = "top")
+
+cowplot::plot_grid(hist_legend, hist_plot, ncol = 1, rel_heights = c(0.1, 1), align = "v")
+```
+Set of concentration values
+```{r fig.height = 10, fig.width = 10}
+lambda_range <- c(0.1, 1, 10, 100)
+
+bin_probs_gamma <- bind_rows(lapply(lambda_range, function(lambda) get_bin_probs_gamma(lambda = lambda, m_partitions = m_partitions, c = c) |> mutate(lambda = lambda) |> filter(
+  !(binom_pmass_cum>0.999 & conc>10) &
+  !(binom_pmass_cum<0.001))))
+
+# plot as histogram/bars instead
+hist_plot <- bin_probs_gamma |> 
+  ggplot(aes(xmin = bin_left, xmax = bin_right, ymin = 0)) +
+  geom_rect(aes(ymax=binom_pmass), stat="identity", fill = "black", alpha = 0.8) +
+  geom_rect(aes(ymax=pmass), stat="identity", alpha = 0.5, fill = "red") +
+  theme_bw() +
+  theme(
+    legend.position = "top",
+    strip.background = element_rect(fill = "white"),
+    ) +
+  facet_wrap(~lambda, ncol = 1, scales = "free") +
+  scale_x_continuous("Concentration [gc/mL]", expand = c(0,0)) +
+  ylab("Probability mass")
+
+cowplot::plot_grid(hist_legend, hist_plot, ncol = 1, rel_heights = c(0.03, 1), align = "v")
+
+ggsave(here::here("figures", "dPCR paper", "gamma_approximation_histogram.pdf"), width = 10, height = 12)
+```
+Compute total error in bin probabilities
+```{r}
+lambda_range <- seq(0.1^(1/10), 105^(1/10), length.out = 100)^10
+
+bin_probs_gamma_summary <- bind_rows(lapply(lambda_range, function(lambda) get_bin_probs_gamma(lambda = lambda, m_partitions = m_partitions, c = c) |> mutate(lambda = lambda))) |> mutate(
+  error = abs(pmass - binom_pmass)
+  ) |> 
+  group_by(lambda) |> 
+  summarize(
+    total_error = sum(error, na.rm = TRUE)
+  )
+
+ggplot(bin_probs_gamma_summary, aes(x = lambda, y = total_error)) +
+  geom_vline(xintercept = c_LOD, linetype = "dashed") + 
+  geom_vline(xintercept = c_LOQ, linetype = "dotted") + 
+  geom_point() +
+  geom_line() +
+  geom_text(
+    x = c_LOD,
+    y = -Inf,
+    label = "95% detection probability",
+    angle = 90,
+    vjust = 1.5,
+    hjust = -0.05,
+    inherit.aes = FALSE,
+    size = 3,
+    fontface = "plain",
+  ) +
+  geom_text(
+    x = c_LOQ,
+    y = -Inf,
+    label = "30% coefficient of variation",
+    angle = 90,
+    vjust = 1.5,
+    hjust = -0.05,
+    inherit.aes = FALSE,
+    size = 3,
+    fontface = "plain",
+  ) +
+  scale_x_continuous("Concentration [gc/mL]", expand = expansion(add=c(1, 0))) +
+  scale_y_continuous("Total absolute error in probability mass") +
+  theme_bw() +
+  coord_cartesian(xlim=c(0,102))
+
+ggsave(here::here("figures", "dPCR paper", "gamma_approximation_absolute_error.pdf"), width = 10, height = 5)
+```

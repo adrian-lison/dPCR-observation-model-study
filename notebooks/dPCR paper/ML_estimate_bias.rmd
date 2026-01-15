@@ -1,0 +1,98 @@
+---
+title: "Simulation of bias of ML concentration estimator"
+---
+
+## Setup
+```{r}
+here::i_am("notebooks/dPCR paper/ML_estimate_bias.Rmd")
+```
+
+```{r}
+source(here::here("code/utils_dPCR_statistics.R"))
+source(here::here("code/utils_dists.R"))
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+library(data.table)
+```
+
+```{r}
+expected_value_conc_estimator <- function(lambda, m_partitions, c) {
+  pos_drops <- seq(0, m_partitions)
+  conc <- - log(1 - (pos_drops / m_partitions)) * (1/c)
+  pmass <- dbinom(
+    x = pos_drops,
+    size = m_partitions,
+    prob = 1 - exp(-lambda * c)
+    )
+  expected_value <- sum(conc * pmass, na.rm = T)
+  return(expected_value)
+}
+```
+
+```{r}
+m_partitions <- 25000
+c <- 1.73e-5
+```
+
+Relative bias is almost constant in lambda
+```{r}
+test_lambda <- 1
+(expected_value_conc_estimator(
+  lambda = test_lambda,
+  m_partitions = m_partitions,
+  c = c
+)-test_lambda)/test_lambda
+```
+
+```{r}
+test_lambda <- 1
+m_seq <- seq(500, 51000, by = 100)
+rel_bias <- sapply(m_seq, function(m) {
+  conc_est <- expected_value_conc_estimator(
+    lambda = test_lambda,
+    m_partitions = m,
+    c = 1e-5
+  )
+  return((conc_est-test_lambda)/test_lambda)
+})
+```
+
+```{r}
+# plot bias as function of m
+bias_df <- data.frame(
+  m_partitions = m_seq,
+  rel_bias = rel_bias
+)
+
+ggplot(bias_df, aes(x = m_partitions, y = rel_bias)) +
+  geom_line() +
+  labs(
+    x = "Total number of partitions",
+    y = "Relative bias",
+  ) +
+  scale_y_continuous(labels = scales::percent, expand = c(0,0)) +
+  scale_x_continuous(expand = c(0,0)) +
+  theme_bw() +
+  coord_cartesian(ylim = c(-1e-5, NA), xlim = c(-1, NA))
+
+ggsave(here::here("figures", "dPCR paper", "ML_conc_estimator_bias_vs_m_partitions.pdf"),
+       width = 10, height = 6)
+```
+
+Relative effect on CV
+```{r}
+ggplot(bias_df, aes(x = m_partitions, y = -rel_bias/(1+rel_bias))) +
+  geom_line() +
+  labs(
+    x = "Total number of partitions",
+    y = "Effect on relative bias of asymptotic CV",
+  ) +
+  scale_y_continuous(labels = scales::percent, expand = c(0,0)) +
+  scale_x_continuous(expand = c(0,0)) +
+  theme_bw() + 
+  coord_cartesian(ylim = c(NA, 1e-5), xlim = c(-1, NA))
+
+ggsave(here::here("figures", "dPCR paper", "ML_conc_estimator_bias_effect_on_CV_vs_m_partitions.pdf"),
+       width = 10, height = 6)
+```
