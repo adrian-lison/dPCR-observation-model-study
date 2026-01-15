@@ -20,7 +20,7 @@ source(here::here("code", "utils_dists.R"))
 ```
 
 ```{r}
-rerun_computations <- FALSE
+rerun_computations <- TRUE
 ```
 
 
@@ -30,7 +30,7 @@ rerun_computations <- FALSE
 
 Computation of coefficient of variation (via simulation and analytical approximations)
 ```{r}
-compute_dat_cv_pre <- function(example_n_replicates, example_c, example_m_partitions, example_cv_values, example_lambda_values, simulate = FALSE, seed = 0) {
+compute_dat_cv_pre <- function(example_n_replicates, example_c, example_m_partitions, example_cv_values, example_lambda_values, simulate = FALSE, seed = 0, n_samples = 1e03, noise_dist = c("lognormal","gamma")) {
   set.seed(seed)
   
   dat_cv_pre <- expand.grid(example_lambda_values, example_c, example_m_partitions, example_cv_values, example_n_replicates)
@@ -41,20 +41,22 @@ compute_dat_cv_pre <- function(example_n_replicates, example_c, example_m_partit
 
   # simulation
   if (simulate) {
-    # simulation for gamma
-    dat_cv_pre$conc_cv_sim_gamma = parallel::mcmapply(sim_cv_pre,
-      lambda = dat_cv_pre$lambda, c = dat_cv_pre$c, m_partitions = dat_cv_pre$m_partitions,
-      cv = dat_cv_pre$cv, n_replicates = dat_cv_pre$n_replicates,
-      distribution = "gamma", n_samples = 1e04, mc.cores = 8
-      )
-  
-    # simulation for lognormal
-    dat_cv_pre$conc_cv_sim_lnorm = parallel::mcmapply(sim_cv_pre,
-      lambda = dat_cv_pre$lambda, c = dat_cv_pre$c, m_partitions = dat_cv_pre$m_partitions,
-      cv = dat_cv_pre$cv, n_replicates = dat_cv_pre$n_replicates,
-      distribution = "lnorm", n_samples = 1e04, mc.cores = 8
-      )
-  
+    if ("gamma" %in% noise_dist) {
+      dat_cv_pre$conc_cv_sim_gamma = parallel::mcmapply(sim_cv_pre,
+        lambda = dat_cv_pre$lambda, c = dat_cv_pre$c, m_partitions = dat_cv_pre$m_partitions,
+        cv = dat_cv_pre$cv, n_replicates = dat_cv_pre$n_replicates,
+        distribution = "gamma", n_samples = n_samples, mc.cores = 8
+        )
+    }
+    
+    if ("lognormal" %in% noise_dist) {
+      dat_cv_pre$conc_cv_sim_lnorm = parallel::mcmapply(sim_cv_pre,
+        lambda = dat_cv_pre$lambda, c = dat_cv_pre$c, m_partitions = dat_cv_pre$m_partitions,
+        cv = dat_cv_pre$cv, n_replicates = dat_cv_pre$n_replicates,
+        distribution = "lnorm", n_samples = n_samples, mc.cores = 8
+        )
+    }
+
   }
 
   # gamma
@@ -110,7 +112,8 @@ if (rerun_computations) {
     example_cv_values = c(0, 0.5, 1, 1.5, 2),
     example_lambda_values = seq(0.001, 15, 0.1),
     simulate = TRUE,
-    seed = 0
+    seed = 0,
+    n_samples = 1e05
   )
   dat_cv_pre <- dat_cv_pre |> 
     mutate(
@@ -130,8 +133,8 @@ dat_cv_pre <- readRDS(here::here("data", "results", "dat_cv_pre.rds"))
 #### Log-normal noise, Taylor approximation
 ```{r} 
 (ggplot(dat_cv_pre, aes(x=lambda)) + 
-  geom_line(aes(y = conc_cv_sim_lnorm, color = cv, group = cv), alpha = 0.5) + 
-  geom_line(aes(y  = conc_cv_taylor, color = cv, group = cv))) |> 
+  geom_line(aes(y = conc_cv_sim_lnorm, color = cv, group = cv), linewidth = 2, alpha = 0.25) + 
+  geom_line(aes(y  = conc_cv_taylor, color = cv, group = cv), linetype = "dashed")) |> 
   format_cv_plot()
 
 ggsave(here::here("figures", "dPCR paper", "cv_pre_lnorm_taylor.pdf"), width = 10, height = 5)
@@ -140,8 +143,8 @@ ggsave(here::here("figures", "dPCR paper", "cv_pre_lnorm_taylor.pdf"), width = 1
 #### Log-normal noise, MGF approximation using Lambert function
 ```{r} 
 (ggplot(dat_cv_pre, aes(x=lambda)) + 
-  geom_line(aes(y = conc_cv_sim_lnorm, color = cv, group = cv), alpha = 0.5) + 
-  geom_line(aes(y  = conc_cv_lnorm, color = cv, group = cv))) |> 
+  geom_line(aes(y = conc_cv_sim_lnorm, color = cv, group = cv), linewidth = 2, alpha = 0.25) + 
+  geom_line(aes(y  = conc_cv_lnorm, color = cv, group = cv), linetype = "dashed")) |> 
   format_cv_plot()
 
 ggsave(here::here("figures", "dPCR paper", "cv_pre_lnorm_lambert.pdf"), width = 10, height = 5)
@@ -151,8 +154,9 @@ ggsave(here::here("figures", "dPCR paper", "cv_pre_lnorm_lambert.pdf"), width = 
 
 ```{r} 
 (ggplot(dat_cv_pre, aes(x=lambda)) + 
-  geom_line(aes(y = conc_cv_sim_lnorm, color = cv, group = cv), alpha = 0.5) + 
-   geom_line(aes(y = conc_cv_taylor, color = cv, group = cv), linetype = "solid") +  geom_line(aes(y  = conc_cv_lnorm, color = cv, group = cv), linetype = "dashed")
+  geom_line(aes(y = conc_cv_sim_lnorm, color = cv, group = cv), linewidth = 2, alpha = 0.25) + 
+   geom_line(aes(y = conc_cv_taylor, color = cv, group = cv), linetype = "dotted") + 
+   geom_line(aes(y  = conc_cv_lnorm, color = cv, group = cv), linetype = "dashed")
  ) |> 
   format_cv_plot()
 
@@ -162,8 +166,8 @@ ggsave(here::here("figures", "dPCR paper", "cv_pre_lnorm_comparison.pdf"), width
 #### Gamma noise, MGF solution
 ```{r} 
 cv_pre_plot_gamma <- (ggplot(dat_cv_pre, aes(x=lambda)) + 
-  geom_line(aes(y = conc_cv_sim_gamma, color = cv, group = cv), alpha = 0.5) + 
-  geom_line(aes(y  = conc_cv_gamma, color = cv, group = cv))) |> 
+  geom_line(aes(y = conc_cv_sim_gamma, color = cv, group = cv), linewidth = 2, alpha = 0.25) + 
+  geom_line(aes(y  = conc_cv_gamma, color = cv, group = cv), linetype = "dashed")) |> 
   format_cv_plot()
 
 ggsave(cv_pre_plot_gamma, filename = here::here("figures", "dPCR paper", "cv_pre_gamma.pdf"), width = 10, height = 5)
@@ -172,8 +176,8 @@ ggsave(cv_pre_plot_gamma, filename = here::here("figures", "dPCR paper", "cv_pre
 #### Gamma noise, Taylor approximation
 ```{r} 
 (ggplot(dat_cv_pre, aes(x=lambda)) + 
-  geom_line(aes(y = conc_cv_sim_gamma, color = cv, group = cv), alpha = 0.5) + 
-  geom_line(aes(y  = conc_cv_taylor, color = cv, group = cv))) |> 
+  geom_line(aes(y = conc_cv_sim_gamma, color = cv, group = cv), linewidth = 2, alpha = 0.25) + 
+  geom_line(aes(y  = conc_cv_taylor, color = cv, group = cv), linetype = "dashed")) |> 
   format_cv_plot()
 
 ggsave(here::here("figures", "dPCR paper", "cv_pre_gamma_taylor.pdf"), width = 10, height = 5)
@@ -236,7 +240,8 @@ if (rerun_computations) {
     example_cv_values = c(0.5),
     example_lambda_values = seq(0.001, 15, 0.1),
     simulate = TRUE,
-    seed = 0
+    seed = 0,
+    n_samples = 1e05
   )
   
   dat_cv_pre_sensitivity_c <- dat_cv_pre_sensitivity_c |> 
@@ -261,8 +266,8 @@ dat_cv_pre_sensitivity_c <- readRDS(here::here("data", "results", "dat_cv_pre_se
     c = factor(c, levels = c(1.557e-05, 1.557e-04, 1.557e-06), labels = c("1.557e-05", "1.557e-05 x10", "1.557e-05 x0.1"))
     ) |> 
 ggplot(aes(x=lambda)) + 
-  geom_line(aes(y = conc_cv_sim_gamma, color = c, group = c), alpha = 0.5) + 
-  geom_line(aes(y  = conc_cv_gamma, color = c, group = c))) |> 
+  geom_line(aes(y = conc_cv_sim_gamma, color = c, group = c), linewidth = 2, alpha = 0.25) + 
+  geom_line(aes(y  = conc_cv_gamma, color = c, group = c), linetype = "dashed")) |> 
   format_cv_plot() +
   scale_color_discrete(name = "Conversion factor")
 
@@ -279,7 +284,8 @@ if (rerun_computations) {
     example_cv_values = c(0.5),
     example_lambda_values = seq(0.001, 15, 0.1),
     simulate = TRUE,
-    seed = 0
+    seed = 0,
+    n_samples = 1e05
   )
   
   dat_cv_pre_sensitivity_m <- dat_cv_pre_sensitivity_m |> 
@@ -304,8 +310,8 @@ dat_cv_pre_sensitivity_m <- readRDS(here::here("data", "results", "dat_cv_pre_se
     m_partitions = factor(sapply(m_partitions, mean), levels = c(25000, 10000, 40000))
     ) |> 
 ggplot(aes(x=lambda)) + 
-  geom_line(aes(y = conc_cv_sim_gamma, color = m_partitions, group = m_partitions), alpha = 0.5) + 
-  geom_line(aes(y  = conc_cv_gamma, color = m_partitions, group = m_partitions))) |> 
+  geom_line(aes(y = conc_cv_sim_gamma, color = m_partitions, group = m_partitions), linewidth = 2, alpha = 0.25) + 
+  geom_line(aes(y  = conc_cv_gamma, color = m_partitions, group = m_partitions), linetype = "dashed")) |> 
   format_cv_plot() +
   scale_color_discrete(name = "Total number of droplets")
 
@@ -318,7 +324,7 @@ ggsave(here::here("figures", "dPCR paper", "cv_pre_sensitivity_m.pdf"), width = 
 
 Computation of probability of non-detection (via simulation and analytical approximations)
 ```{r}
-compute_nondetection_probs <- function(example_lambda_values, example_c, example_m_partitions, example_cv, noise_dist, example_replicates, seed = 0) {
+compute_nondetection_probs <- function(example_lambda_values, example_c, example_m_partitions, example_cv, noise_dist, example_replicates, seed = 0, n_samples = n_samples) {
 set.seed(seed)
 nondetection_probs <- bind_rows(lapply(example_replicates, function(n_replicates) {
   nondetection_probs <- bind_rows(lapply(example_cv, function(technical_cv) {
@@ -331,6 +337,7 @@ nondetection_probs <- bind_rows(lapply(example_replicates, function(n_replicates
       cv = technical_cv,
       n_replicates = n_replicates,
       noise_dist = noise_dist,
+      n_samples = n_samples,
       mc.cores = 4
       )
     nondetection_probs$theoretical <- sapply(nondetection_probs$lambda, est_nondetection_prob_pre,
@@ -377,7 +384,8 @@ if (rerun_computations) {
     example_cv = c(0, 0.5, 1, 1.5, 2),
     noise_dist = "lognormal",
     example_replicates = c(1,2),
-    seed = 0
+    seed = 0,
+    n_samples = 1e05
   )
   
   nondetection_probs_lnorm <- nondetection_probs_lnorm |> mutate(n_replicates_label = paste(ifelse(n_replicates==1,"(i)","(ii)"),n_replicates,ifelse(n_replicates==1,"replicate","replicates")))
@@ -392,8 +400,8 @@ nondetection_probs_lnorm <- readRDS(here::here("data", "results", "nondetection_
 
 ```{r}
 (ggplot(nondetection_probs_lnorm, aes(x = lambda)) +
-  geom_line(aes(y = simulated, color = cv), alpha = 0.5) + 
-  geom_line(aes(y = theoretical, color = cv))
+  geom_line(aes(y = simulated, color = cv), linewidth = 2, alpha = 0.25) + 
+  geom_line(aes(y = theoretical, color = cv), linetype = "dashed")
 ) |> 
   format_nondetect_plot()
 
@@ -410,7 +418,8 @@ if (rerun_computations) {
     example_cv = c(0, 0.5, 1, 1.5, 2),
     noise_dist = "gamma",
     example_replicates = c(1,2),
-    seed = 0
+    seed = 0,
+    n_samples = 1e05
   )
   
   nondetection_probs_gamma <- nondetection_probs_gamma |> mutate(n_replicates_label = paste(ifelse(n_replicates==1,"(i)","(ii)"),n_replicates,ifelse(n_replicates==1,"replicate","replicates")))
@@ -425,8 +434,8 @@ nondetection_probs_gamma <- readRDS(here::here("data", "results", "nondetection_
 
 ```{r}
 prob_nondetection_plot_gamma <- (ggplot(nondetection_probs_gamma, aes(x = lambda)) +
-  geom_line(aes(y = simulated, color = cv), alpha = 0.5) + 
-  geom_line(aes(y = theoretical, color = cv))
+  geom_line(aes(y = simulated, color = cv), linewidth = 2, alpha = 0.25) + 
+  geom_line(aes(y = theoretical, color = cv), linetype = "dashed")
 ) |> 
   format_nondetect_plot()
 

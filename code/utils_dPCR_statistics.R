@@ -18,6 +18,55 @@ sim_partitions <- function(n_samples, n_replicates, max_partitions, partition_lo
   lapply(1:n_samples, function(x) extraDistr::rtbinom(n_replicates, size = max_partitions, prob = 1-plogis(rnorm(n_replicates, mean = partition_loss_logit_mean, sd = partition_loss_logit_sd)), a = max_partitions * (1-partition_loss_max)))
 }
 
+#' Simulate number of valid partitions across dPCR runs (beta-binomial)
+#'
+#' @param n_samples Number of different samples
+#' @param n_replicates Number of replicates per sample
+#' @param max_partitions Maximum number of partitions
+#' @param partition_loss_mean Mean proportion of invalid partitions
+#'   (logit-level)
+#' @param partition_loss_cv CV of proportion of invalid partitions
+#'   (logit-level)
+#' @param partition_loss_max Upper bound for partition loss proportion
+#'
+#' @return Simulated partition numbers, structured as a list with one element
+#'   per sample, where each element is a vector giving the partition numbers
+#'   across replicates
+#'
+#' @examples 
+#' simulated_loss <- ((30000 - purrr::list_c(sim_partitions_bbinom(
+#' n_samples = 100000, n_replicates = 1, max_partitions = 30000,
+#' partition_loss_mean = 0.1, partition_loss_cv = 0.5,
+#' partition_loss_max = 0.5)))/30000)
+#' mean(simulated_loss) # mean
+#' sd(simulated_loss)/mean(simulated_loss) # cv
+sim_partitions_bbinom <- function(n_samples, n_replicates, max_partitions, partition_loss_mean, partition_loss_cv, partition_loss_max = 1, verbose = FALSE) {
+  min_partitions <- max_partitions * (1 - partition_loss_max)
+  nu <- (1-partition_loss_mean) / (partition_loss_mean * partition_loss_cv^2) - 1
+  if (verbose) {
+    print(paste("alpha:", (1 - partition_loss_mean) * nu))
+    print(paste("beta:", partition_loss_mean * nu))
+  }
+  partitions <- lapply(1:n_samples, function(x) extraDistr::rbbinom(
+    n_replicates, size = max_partitions,
+    alpha = (1 - partition_loss_mean) * nu,
+    beta = partition_loss_mean * nu
+    ))
+  if (any(purrr::flatten(partitions) < min_partitions)) {
+    invalid_samples <- which(sapply(partitions, function(p) any(p < min_partitions)))
+    for (is in invalid_samples) {
+      while (any(partitions[[is]] < min_partitions)) {
+        partitions[[is]] <- extraDistr::rbbinom(
+          n_replicates, size = max_partitions,
+          alpha = (1 - partition_loss_mean) * nu,
+          beta = partition_loss_mean * nu
+        )
+      }
+    }
+  }
+  return(partitions)
+}
+
 #' Simulate concentration measurements based on the dPCR partition count model
 #'
 #' @param lambda Expected concentration in the sample
@@ -197,15 +246,15 @@ sim_nondetection_prob <- function(lambda, c, m_partitions = 20000, n_replicates 
 #' @param gc_per_rxn overall number of gene copies in the reaction
 #'
 #' @return probability of non-detection (zero measurement)
-sim_nondetection_prob_pre <- function(lambda, cv, c, m_partitions = 20000, n_replicates = 1, noise_dist = "gamma") {
+sim_nondetection_prob_pre <- function(lambda, cv, c, m_partitions = 20000, n_replicates = 1, noise_dist = "gamma", n_samples = 10000) {
   if (length(m_partitions) == 1) m_partitions <- rep(m_partitions, n_replicates)
   if (cv == 0) {
     return(sim_nondetection_prob(lambda = lambda, c = c, m_partitions = m_partitions, n_replicates = n_replicates))
   }
   if (noise_dist == "gamma") {
-    lambdas <- rgamma(10000, shape = 1/cv^2, rate = 1/(lambda * cv^2))
+    lambdas <- rgamma(n_samples, shape = 1/cv^2, rate = 1/(lambda * cv^2))
   } else if (noise_dist == "lognormal") {
-    lambdas <- rlnorm3(10000, lambda, cv)
+    lambdas <- rlnorm3(n_samples, lambda, cv)
   } else {
     stop(paste("Noise dist", noise_dist, "not supported."))
   }
